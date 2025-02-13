@@ -92,7 +92,7 @@ class UriServer():
 
         return access_token
 
-    def refresh_access_token(self, cliend_id: str, scope: list[str],
+    def refresh_access_token(self, client_id: str, scope: list[str],
                      redirect_uri: str = REDIRECT_URI,
                      timeout: int = DEFAULT_TIMEOUT) -> str | None:
 
