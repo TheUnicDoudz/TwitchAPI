@@ -12,9 +12,10 @@ import requests
 
 DEFAULT_ADDRESS = "0.0.0.0"
 DEFAULT_PORT = 8000
+REDIRECT_URI = f"http://localhost:{DEFAULT_PORT}/oauth2callback"
 DEFAULT_TIMEOUT = 600
 
-code_dict = {}
+access_token_dict = {}
 
 
 class WebRequestHandler(BaseHTTPRequestHandler):
@@ -34,7 +35,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             if 'state' in query and 'code' in query:
                 state = query['state'][0]
                 code = query['code'][0]
-                code_dict[state] = code
+                access_token_dict[state] = code
             else:
                 logging.error("No state provided")
 
@@ -81,21 +82,21 @@ class UriServer():
         self.server.server_close()
         logging.info('Server stopped!')
 
-    def get_code(self, state: str) -> str:
+    def get_access_token(self, state: str) -> str:
 
-        code = None
+        access_token = None
 
-        if state in code_dict:
-            code = code_dict[state]
-            code_dict.pop(state)  # Prevent replay attack
+        if state in access_token_dict:
+            access_token = access_token_dict[state]
+            access_token_dict.pop(state)  # Prevent replay attack
 
-        return code
+        return access_token
 
-    def refresh_code(self, cliend_id: str, scope: list[str],
-                     redirect_uri: str = "http://localhost:8000/oauth2callback",
+    def refresh_access_token(self, cliend_id: str, scope: list[str],
+                     redirect_uri: str = REDIRECT_URI,
                      timeout: int = DEFAULT_TIMEOUT) -> str | None:
 
-        code = None
+        access_token = None
         twitchid_url = "https://id.twitch.tv/oauth2/authorize"
 
         state_length = randint(16, 32)
@@ -120,7 +121,7 @@ class UriServer():
         logging.debug("Authentification URL: " + r.url)
         webbrowser.open_new(r.url)
 
-        logging.info("Retrieving code from redirect_uri..")
+        logging.info("Retrieving access_token from redirect_uri..")
 
         self.start()
 
@@ -128,9 +129,9 @@ class UriServer():
 
         try:
             while time.time() - start < timeout:
-                code = uri.get_code(state)
-                if code is not None:
-                    logging.info('Code received!')
+                access_token = uri.get_access_token(state)
+                if access_token is not None:
+                    logging.info('access_token received!')
                     break
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -138,11 +139,11 @@ class UriServer():
         finally:
             self.stop()
 
-        if code is None:
-            logging.error("Code not recovered..")
+        if access_token is None:
+            logging.error("access_token not recovered..")
             return
 
-        return code
+        return access_token
 
 
 if __name__ == '__main__':
@@ -153,6 +154,6 @@ if __name__ == '__main__':
 
     uri = UriServer()
 
-    code = uri.refresh_code("zbbxen0gpgra4z35smahbajyi0o8o5", scope=["chat:read", "chat:edit"])
+    access_token = uri.refresh_access_token("zbbxen0gpgra4z35smahbajyi0o8o5", scope=["chat:read", "chat:edit"])
 
-    logging.info(f"Code: {code}")
+    logging.info(f"access_token: {access_token}")
