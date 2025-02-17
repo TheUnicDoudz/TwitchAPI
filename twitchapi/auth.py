@@ -102,7 +102,7 @@ class UriServer():
         state_length = randint(16, 32)
         state = secrets.token_urlsafe(state_length)
         auth_params = {
-            "client_id": cliend_id,
+            "client_id": client_id,
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scope),
