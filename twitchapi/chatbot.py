@@ -1,3 +1,4 @@
+import json
 import os
 
 import requests
@@ -15,17 +16,19 @@ class ChatBot:
 
         if not os.path.exists(self.ACCESS_TOKEN_FILE):
             uri = UriServer()
-            token = uri.refresh_access_token(client_id=client_id, scope=["user:read:chat", "user:write:chat"],
+            token, refresh_token = uri.get_access_token(client_id=client_id, client_secret=client_secret, scope=["user:read:chat", "user:write:chat", "user:bot", "channel:bot"],
                                      redirect_uri=redirect_uri, timeout=timeout)
+            credentials = {"access_token": token, "refresh_token": refresh_token}
             with open(self.ACCESS_TOKEN_FILE, "w") as f:
-                f.write(token)
+                json.dump(credentials, f)
         else:
             with open(self.ACCESS_TOKEN_FILE, "r") as f:
-                token = f.read()
+                credentials = json.load(f)
 
         self.__headers = {
-            "Authorization": f"Bearer {token}",
-            "Client-Id": self._client_id
+            "Authorization": f"Bearer {credentials['access_token']}",
+            "Client-Id": self._client_id,
+            "Content-Type": "application/json"
         }
 
         r = requests.get(f"{self.ID_ENDPOINT}users?login={bot_name}", headers=self.__headers)
