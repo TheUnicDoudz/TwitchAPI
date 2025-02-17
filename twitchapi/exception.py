@@ -1,0 +1,2 @@
+class TwitchAuthorizationFailed(Exception):
+    pass
