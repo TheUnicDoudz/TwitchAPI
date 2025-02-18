@@ -15,7 +15,7 @@ from twitchapi.exception import TwitchAuthorizationFailed
 
 DEFAULT_ADDRESS = "0.0.0.0"
 DEFAULT_PORT = 8000
-REDIRECT_URI = f"http://localhost:{DEFAULT_PORT}/oauth2callback"
+REDIRECT_URI_AUTH = f"http://localhost:{DEFAULT_PORT}/oauth2callback"
 DEFAULT_TIMEOUT = 600
 
 code_dict = {}
@@ -47,7 +47,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         return self.do_GET()
 
 
-class UriServer():
+class AuthServer():
 
     def __init__(self,
                  address=DEFAULT_ADDRESS,
@@ -95,7 +95,7 @@ class UriServer():
         return code
 
     def get_access_token(self, client_id: str, client_secret: str, scope: list[str],
-                         redirect_uri: str = REDIRECT_URI,
+                         redirect_uri: str = REDIRECT_URI_AUTH,
                          timeout: int = DEFAULT_TIMEOUT) -> tuple[str, str, str]:
 
         access_token = None
