@@ -2,17 +2,24 @@ import json
 import logging
 import os
 from datetime import datetime
-
+from enum import Enum
 import requests
+from requests import Response
+
 from twitchapi.auth import UriServer, REDIRECT_URI, DEFAULT_TIMEOUT
-from twitchapi.exception import TwitchAuthentificationError, TwitchEndpointError
+from twitchapi.exception import TwitchAuthentificationError, TwitchEndpointError, TwitchMessageNotSentWarning
+
+
+class TwitchEndpoint(Enum):
+    TWITCH_ENDPOINT = "https://api.twitch.tv/helix/"
+    USER_ID = "users?login="
+    SEND_MESSAGE = "chat/messages"
 
 
 class ChatBot:
-    TWITCH_ENDPOINT = "https://api.twitch.tv/helix/"
     ACCESS_TOKEN_FILE = ".access_token"
 
-    def __init__(self, client_id, client_secret, bot_name, owner_name, redirect_uri=REDIRECT_URI,
+    def __init__(self, client_id, client_secret, bot_name, channel_name, redirect_uri=REDIRECT_URI,
                  timeout=DEFAULT_TIMEOUT):
         self._client_id = client_id
         self.__client_secret = client_secret
@@ -53,30 +60,58 @@ class ChatBot:
 
         self._bot_id = self._get_id(bot_name)
         logging.debug("Bot id: " + self._bot_id)
-        self._owner_id = self._get_id(owner_name)
-        logging.debug("Owner id: " + self._owner_id)
+        self._channel_id = self._get_id(channel_name)
+        logging.debug("Channel id: " + self._channel_id)
 
     def _get_id(self, user_name: str) -> str:
-        data = self.__get_request(endpoint="users?login=" + user_name)
+        data = self.__get_request(endpoint= TwitchEndpoint.USER_ID.value + user_name)
         return data['data'][0]['id']
 
+    def send_message(self, message: str, reply_message_id: str = None):
+        data = {
+            "broadcaster_id": self._channel_id,
+            "sender_id": self._bot_id,
+            "message": message,
+        }
+        if reply_message_id:
+            data["reply_parent_message_id"] = reply_message_id
+
+        add_data = self.__post_request(endpoint= TwitchEndpoint.SEND_MESSAGE.value, data=data)['data'][0]
+
+        if not add_data["is_sent"]:
+            logging.warning(f"Message not sent: {add_data['drop_reason']}")
+            drop_code = add_data["drop_reason"]["code"]
+            drop_message = add_data["drop_reason"]["message"]
+            raise TwitchMessageNotSentWarning(f"{drop_code}: {drop_message}")
+
     def __get_request(self, endpoint: str) -> dict:
-        url_endpoint = self.TWITCH_ENDPOINT + endpoint
-        r = requests.get(url_endpoint, headers=self.__headers)
-        if r.status_code != 200:
-            if r.status_code == 401:
+        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT.value + endpoint
+        r = self.__check_request(requests.get, url_endpoint)
+        return r.json()
+
+    def __post_request(self, endpoint: str, data: dict) -> dict:
+        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT.value + endpoint
+        r = self.__check_request(requests.post, url_endpoint, data)
+        return r.json()
+
+    def __check_request(self, request_function, url_endpoint: str, data: dict = None) -> Response:
+        params = {"url": url_endpoint, "headers": self.__headers}
+        if data:
+            params["json"] = data
+        response = request_function(**params)
+        if response.status_code != 200:
+            if response.status_code == 401:
                 self.__refresh_access_token()
-                r = requests.get(url_endpoint, headers=self.__headers)
-                if r.status_code != 200:
-                    logging.info(r.content)
+                response = request_function(**params)
+                if response.status_code != 200:
+                    logging.error(response.content)
                     raise TwitchAuthentificationError("Something's wrong with the access token!!")
             else:
                 raise TwitchEndpointError(
                     f"The url {url_endpoint} is not correct or you don't have the rights to use it!")
-        return r.json()
+        return response
 
     def __refresh_access_token(self):
-
         access_token, refresh_token, expire_date = self.__uri.refresh_token(self._client_id, self.__client_secret,
                                                                             self.__credentials["refresh_token"])
         self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date}
