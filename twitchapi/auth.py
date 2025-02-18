@@ -1,5 +1,6 @@
 import time
 import webbrowser
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
 import threading
@@ -10,13 +11,14 @@ from random import randint
 
 import requests
 
+from twitchapi.exception import TwitchAuthorizationFailed
+
 DEFAULT_ADDRESS = "0.0.0.0"
 DEFAULT_PORT = 8000
 REDIRECT_URI = f"http://localhost:{DEFAULT_PORT}/oauth2callback"
 DEFAULT_TIMEOUT = 600
 
-access_token_dict = {}
-
+code_dict = {}
 
 class WebRequestHandler(BaseHTTPRequestHandler):
 
@@ -30,12 +32,12 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(url.query)
 
         if url.path == "/oauth2callback":
-            logging.info('callback!')
-            logging.info(query)
+            logging.info('Callback!')
+            logging.debug(query)
             if 'state' in query and 'code' in query:
+                logging.info("Code provided!")
                 state = query['state'][0]
-                code = query['code'][0]
-                access_token_dict[state] = code
+                code_dict[state] = query['code'][0]
             else:
                 logging.error("No state provided")
 
@@ -82,41 +84,46 @@ class UriServer():
         self.server.server_close()
         logging.info('Server stopped!')
 
-    def get_access_token(self, state: str) -> str:
+    def get_code(self, state: str) -> str:
+
+        code = None
+
+        if state in code_dict:
+            code = code_dict[state]
+            code_dict.pop(state)  # Prevent replay attack
+
+        return code
+
+    def get_access_token(self, client_id: str, client_secret: str, scope: list[str],
+                         redirect_uri: str = REDIRECT_URI,
+                         timeout: int = DEFAULT_TIMEOUT) -> tuple[str, str, str]:
 
         access_token = None
-
-        if state in access_token_dict:
-            access_token = access_token_dict[state]
-            access_token_dict.pop(state)  # Prevent replay attack
-
-        return access_token
-
-    def refresh_access_token(self, client_id: str, scope: list[str],
-                     redirect_uri: str = REDIRECT_URI,
-                     timeout: int = DEFAULT_TIMEOUT) -> str | None:
-
-        access_token = None
-        twitchid_url = "https://id.twitch.tv/oauth2/authorize"
+        refresh_token = None
+        expire_date = None
+        code = None
+        twitch_code_url = "https://id.twitch.tv/oauth2/authorize"
+        twich_token_url = "https://id.twitch.tv/oauth2/token"
 
         state_length = randint(16, 32)
         state = secrets.token_urlsafe(state_length)
-        auth_params = {
-            "client_id": cliend_id,
+        code_auth_params = {
+            "client_id": client_id,
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scope),
             "state": state
         }
 
-        auth_params_str = urllib.parse.urlencode(auth_params)
-        logging.debug(auth_params_str)
+        code_auth_params_str = urllib.parse.urlencode(code_auth_params)
+        logging.debug(code_auth_params_str)
 
-        r = requests.get(f"{twitchid_url}?{auth_params_str}")
+        r = requests.get(f"{twitch_code_url}?{code_auth_params_str}")
 
         if r.status_code != 200:
             logging.error(r.content)
-            return
+            raise TwitchAuthorizationFailed("Failed to call the Authorization end point! Verify the Client ID of your "
+                                            "application!")
 
         logging.debug("Authentification URL: " + r.url)
         webbrowser.open_new(r.url)
@@ -129,31 +136,72 @@ class UriServer():
 
         try:
             while time.time() - start < timeout:
-                access_token = uri.get_access_token(state)
-                if access_token is not None:
+                code = self.get_code(state)
+                if code is not None:
                     logging.info('access_token received!')
                     break
                 time.sleep(1)
+
+            if code is None:
+                logging.error("code not recovered..")
+                raise TwitchAuthorizationFailed("Fail to provide authorization code! Verify the redirect URI "
+                                                "(if not default value)!")
+
+            token_auth_params = {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri
+            }
+
+            token_auth_params_str = urllib.parse.urlencode(token_auth_params)
+
+            logging.debug(token_auth_params_str)
+
+            r = requests.post(f"{twich_token_url}?{token_auth_params_str}")
+
+            if r.status_code != 200:
+                logging.error(r.content)
+                raise TwitchAuthorizationFailed("Fail to provide access token! Verify the Client secret of your "
+                                                "application!")
+
+            data = r.json()
+            access_token = data["access_token"]
+            refresh_token = data["refresh_token"]
+            expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
+            logging.info('access_token received!')
+
         except KeyboardInterrupt:
             pass
         finally:
             self.stop()
 
-        if access_token is None:
-            logging.error("access_token not recovered..")
-            return
+        logging.debug(f"OAuth token: {access_token}")
+        logging.debug(f"Refresh token: {refresh_token}")
+        return access_token, refresh_token, expire_date
 
-        return access_token
+    def refresh_token(self, client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str, str]:
 
+        twich_token_url = "https://id.twitch.tv/oauth2/token"
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s.%(msecs)03d <%(levelname).1s> %(message)s',
-                        datefmt='%y-%m-%d %H:%M:%S')
-    logging.info("httpd URI Server")
+        token_auth_params = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token
+        }
 
-    uri = UriServer()
+        token_auth_params_str = urllib.parse.urlencode(token_auth_params)
 
-    access_token = uri.refresh_access_token("zbbxen0gpgra4z35smahbajyi0o8o5", scope=["chat:read", "chat:edit"])
+        r = requests.post(f"{twich_token_url}?{token_auth_params_str}")
 
-    logging.info(f"access_token: {access_token}")
+        if r.status_code != 200:
+            logging.error(r.content)
+            raise TwitchAuthorizationFailed("Failed to call the Authorization end point! Verify the Client ID, the "
+                                            "Client secret or the refresh token of your application!")
+        data = r.json()
+        access_token = data["access_token"]
+        refresh_token = data["refresh_token"]
+        expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
+        return access_token, refresh_token, expire_date
