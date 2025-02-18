@@ -1,5 +1,6 @@
 import time
 import webbrowser
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
 import threading
@@ -95,10 +96,11 @@ class UriServer():
 
     def get_access_token(self, client_id: str, client_secret: str, scope: list[str],
                          redirect_uri: str = REDIRECT_URI,
-                         timeout: int = DEFAULT_TIMEOUT) -> tuple[str, str]:
+                         timeout: int = DEFAULT_TIMEOUT) -> tuple[str, str, str]:
 
         access_token = None
         refresh_token = None
+        expire_date = None
         code = None
         twitch_code_url = "https://id.twitch.tv/oauth2/authorize"
         twich_token_url = "https://id.twitch.tv/oauth2/token"
@@ -167,6 +169,7 @@ class UriServer():
             data = r.json()
             access_token = data["access_token"]
             refresh_token = data["refresh_token"]
+            expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
             logging.info('access_token received!')
 
         except KeyboardInterrupt:
@@ -176,9 +179,9 @@ class UriServer():
 
         logging.debug(f"OAuth token: {access_token}")
         logging.debug(f"Refresh token: {refresh_token}")
-        return access_token, refresh_token
+        return access_token, refresh_token, expire_date
 
-    def refresh_token(self, client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str]:
+    def refresh_token(self, client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str, str]:
 
         twich_token_url = "https://id.twitch.tv/oauth2/token"
 
@@ -197,15 +200,8 @@ class UriServer():
             logging.error(r.content)
             raise TwitchAuthorizationFailed("Failed to call the Authorization end point! Verify the Client ID, the "
                                             "Client secret or the refresh token of your application!")
-
-        return r.content["access_token"], r.content["refresh_token"]
-
-if __name__ == '__main__':
-
-    logging.info("httpd URI Server")
-
-    uri = UriServer()
-
-    access_token = uri.refresh_access_token("zbbxen0gpgra4z35smahbajyi0o8o5", scope=["chat:read", "chat:edit"])
-
-    logging.info(f"access_token: {access_token}")
+        data = r.json()
+        access_token = data["access_token"]
+        refresh_token = data["refresh_token"]
+        expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
+        return access_token, refresh_token, expire_date
