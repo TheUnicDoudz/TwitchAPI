@@ -6,3 +6,6 @@ class TwitchAuthentificationError(Exception):
 
 class TwitchEndpointError(Exception):
     pass
+
+class TwitchMessageNotSentWarning(Exception):
+    pass
