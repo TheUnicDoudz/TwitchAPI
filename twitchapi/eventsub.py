@@ -1,69 +1,76 @@
-import threading
-import urllib.parse
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
 import sqlite3
+from datetime import datetime
 
-DEFAULT_ADDRESS = "0.0.0.0"
-DEFAULT_PORT = 3000
+import websocket
+from websocket import WebSocketApp
 
-MESSAGE_ENDPOINT = "/message"
-REDIRECT_URI_MESSAGE = f"https://localhost:{DEFAULT_PORT}{MESSAGE_ENDPOINT}"
+from twitchapi.auth import AuthServer
+from twitchapi.utils import TwitchEndpoint
+import json
+
 
 # message_db = sqlite3.connect('TwitchDatabase/message.db')
 # follower_db = sqlite3.connect('TwitchDatabase/follower.db')
 
-class WebRequestHandler(BaseHTTPRequestHandler):
+class EventSub(WebSocketApp):
 
-    def do_GET(self):
+    def __init__(self, bot_id:str, channel_id:str, subscription_types:list[str], auth_server:AuthServer):
+        super().__init__(url=TwitchEndpoint.TWITCH_WEBSOCKET_URL, on_message=self.on_message)
+        self.__session_id = None
+        self.__auth = auth_server
+        self._bot_id = bot_id
+        self._channel_id = channel_id
+        self._subscription_types = subscription_types
 
-        logging.info(f'client:  {self.client_address}')
-        logging.info(f'command: {self.command}')
-        logging.info(f'path:    {self.path}')
+        self._last_message_date=None
 
-        url = urllib.parse.urlparse(self.path)
-        query = urllib.parse.parse_qs(url.query)
+    def on_message(self, ws, message):
+        logging.debug("Message received:" + message)
+        data = json.loads(message)
 
-        if url.path == MESSAGE_ENDPOINT:
-            logging.info('Receive message!')
-            logging.debug(query)
+        metadata = data["metadata"]
+        payload = data["payload"]
 
-        self.send_response(HTTPStatus.OK)
+        message_type = metadata["message_type"]
+        self._last_message_date = datetime.strptime(metadata["message_timestamp"][:-4], "%Y-%m-%dT%H:%M:%S.%f")
 
-    def do_POST(self):
-        return self.do_GET()
+        match message_type:
+            case "session_welcome":
+                self.__session_id = payload["session"]["id"]
+                for subscription in self._subscription_types:
+                    match subscription:
+                        case "channel.chat.message":
+                            logging.info("Subscription to get chat message")
+                            condition = {"broadcaster_user_id": self._channel_id, "user_id": self._bot_id}
+                            self.__subscription(subscription_type=subscription, condition=condition)
+            case "notification":
+                subscription_type = payload["subscription"]["type"]
+                match subscription_type:
+                    case "channel.chat.message":
+                        event = payload["event"]
+                        user_name = event["chatter_user_login"]
+                        msg = event["message"]["text"]
+                        logging.info(f"{user_name} say : '{msg}'")
 
-class EventSub():
-    def __init__(self,
-                 address=DEFAULT_ADDRESS,
-                 port=DEFAULT_PORT):
+    def on_error(self, ws, message):
+        logging.error(message)
 
-        self.address = address
-        self.port = port
-        self.start()
+    def on_close(self, ws, close_status_code, close_msg):
+        logging.info("Close websocket")
 
+    def on_open(self, ws):
+        logging.info(f"Connect to {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
 
-    def __http_thread(self):
-        self.server = HTTPServer(('', self.port), WebRequestHandler)
-        logging.info(f'Serving on {self.server.server_address}')
-
-        try:
-            self.server.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        logging.info('Exiting HTTP thread')
-
-    def start(self):
-        self.thread = threading.Thread(target=self.__http_thread)
-        self.thread.start()
-
-    def stop(self):
-
-        logging.info('Stopping server')
-        self.server.shutdown()
-
-        logging.info('Join thread')
-        self.thread.join()
-        self.server.server_close()
-        logging.info('Server stopped!')
+    def __subscription(self, subscription_type: str, condition: dict[str, str]):
+        logging.info(f"Subscription for {subscription_type}")
+        data = {
+            "type": subscription_type,
+            "version": "1",
+            "condition": condition,
+            "transport": {
+                "method": "websocket",
+                "session_id": self.__session_id
+            }
+        }
+        self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
