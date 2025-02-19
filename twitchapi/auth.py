@@ -24,6 +24,7 @@ ACCESS_TOKEN_FILE = ".access_token"
 
 code_dict = {}
 
+
 class WebRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
@@ -237,7 +238,7 @@ class AuthServer():
         if data:
             params["json"] = data
         response = request_function(**params)
-        if response.status_code != 200:
+        if response.status_code >= 300:
             if response.status_code == 401:
                 self.refresh_token()
                 response = request_function(**params)
@@ -249,35 +250,36 @@ class AuthServer():
                     f"The url {url_endpoint} is not correct or you don't have the rights to use it!")
         return response
 
-    def authentication(self, client_id: str, client_secret: str, scope: list[str], timeout:int=DEFAULT_TIMEOUT, redirect_uri:str=REDIRECT_URI_AUTH):
+    def authentication(self, client_id: str, client_secret: str, scope: list[str], timeout: int = DEFAULT_TIMEOUT,
+                       redirect_uri: str = REDIRECT_URI_AUTH):
 
         self._client_id = client_id
         self.__client_secret = client_secret
         if not os.path.exists(ACCESS_TOKEN_FILE):
             access_token, refresh_token, expire_date = self.get_access_token(client_id=client_id,
-                                                                                   client_secret=client_secret,
-                                                                                   scope= scope,
-                                                                                   redirect_uri=redirect_uri,
-                                                                                   timeout=timeout)
+                                                                             client_secret=client_secret,
+                                                                             scope=scope,
+                                                                             redirect_uri=redirect_uri,
+                                                                             timeout=timeout)
             self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
                                   "expire_date": expire_date}
             with open(ACCESS_TOKEN_FILE, "w") as f:
                 json.dump(self.__credentials, f)
+
+            self.__headers = {
+                "Authorization": f"Bearer {self.__credentials['access_token']}",
+                "Client-Id": self._client_id,
+                "Content-Type": "application/json"
+            }
         else:
             with open(ACCESS_TOKEN_FILE, "r") as f:
                 self.__credentials = json.load(f)
 
-            if datetime.strptime(self.__credentials["expire_date"], '%d/%m/%Y') <= datetime.now():
-                access_token, refresh_token, expire_date = self.refresh_token(self._client_id,
-                                                                                    self.__client_secret,
-                                                                                    self.__credentials["refresh_token"])
-                self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
-                                      "expire_date": expire_date}
-                with open(ACCESS_TOKEN_FILE, "w") as f:
-                    json.dump(self.__credentials, f)
+            self.__headers = {
+                "Authorization": f"Bearer {self.__credentials['access_token']}",
+                "Client-Id": self._client_id,
+                "Content-Type": "application/json"
+            }
 
-        self.__headers = {
-            "Authorization": f"Bearer {self.__credentials['access_token']}",
-            "Client-Id": self._client_id,
-            "Content-Type": "application/json"
-        }
+            if datetime.strptime(self.__credentials["expire_date"], '%d/%m/%Y') <= datetime.now():
+                self.refresh_token()
