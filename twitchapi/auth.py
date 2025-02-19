@@ -8,15 +8,19 @@ import urllib.parse
 import logging
 import secrets
 from random import randint
-
+import json
+import os
 import requests
+from requests import Response
 
-from twitchapi.exception import TwitchAuthorizationFailed
+from twitchapi.exception import TwitchAuthorizationFailed, TwitchAuthentificationError, TwitchEndpointError
+from twitchapi.utils import TwitchEndpoint
 
 DEFAULT_ADDRESS = "0.0.0.0"
 DEFAULT_PORT = 8000
 REDIRECT_URI_AUTH = f"http://localhost:{DEFAULT_PORT}/oauth2callback"
 DEFAULT_TIMEOUT = 600
+ACCESS_TOKEN_FILE = ".access_token"
 
 code_dict = {}
 
@@ -56,6 +60,10 @@ class AuthServer():
 
         self.address = address
         self.port = port
+        self._client_id = None
+        self.__client_secret = None
+        self.__credentials = None
+        self.__headers = None
 
         if start is True:
             self.start()
@@ -181,15 +189,15 @@ class AuthServer():
         logging.debug(f"Refresh token: {refresh_token}")
         return access_token, refresh_token, expire_date
 
-    def refresh_token(self, client_id: str, client_secret: str, refresh_token: str) -> tuple[str, str, str]:
+    def refresh_token(self) -> None:
 
-        twich_token_url = "https://id.twitch.tv/oauth2/token"
+        twich_token_url = TwitchEndpoint.TWITCH_AUTH_URL
 
         token_auth_params = {
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": self._client_id,
+            "client_secret": self.__client_secret,
             "grant_type": "refresh_token",
-            "refresh_token": refresh_token
+            "refresh_token": self.__credentials["refresh_token"]
         }
 
         token_auth_params_str = urllib.parse.urlencode(token_auth_params)
@@ -204,4 +212,72 @@ class AuthServer():
         access_token = data["access_token"]
         refresh_token = data["refresh_token"]
         expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
-        return access_token, refresh_token, expire_date
+        self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date}
+        with open(ACCESS_TOKEN_FILE, "w") as f:
+            json.dump(self.__credentials, f)
+
+        self.__headers = {
+            "Authorization": f"Bearer {self.__credentials['access_token']}",
+            "Client-Id": self._client_id,
+            "Content-Type": "application/json"
+        }
+
+    def get_request(self, endpoint: str) -> dict:
+        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT + endpoint
+        r = self.__check_request(requests.get, url_endpoint)
+        return r.json()
+
+    def post_request(self, endpoint: str, data: dict) -> dict:
+        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT + endpoint
+        r = self.__check_request(requests.post, url_endpoint, data)
+        return r.json()
+
+    def __check_request(self, request_function, url_endpoint: str, data: dict = None) -> Response:
+        params = {"url": url_endpoint, "headers": self.__headers}
+        if data:
+            params["json"] = data
+        response = request_function(**params)
+        if response.status_code != 200:
+            if response.status_code == 401:
+                self.refresh_token()
+                response = request_function(**params)
+                if response.status_code != 200:
+                    logging.error(response.content)
+                    raise TwitchAuthentificationError("Something's wrong with the access token!!")
+            else:
+                raise TwitchEndpointError(
+                    f"The url {url_endpoint} is not correct or you don't have the rights to use it!")
+        return response
+
+    def authentication(self, client_id: str, client_secret: str, scope: list[str], timeout:int=DEFAULT_TIMEOUT, redirect_uri:str=REDIRECT_URI_AUTH):
+
+        self._client_id = client_id
+        self.__client_secret = client_secret
+        if not os.path.exists(ACCESS_TOKEN_FILE):
+            access_token, refresh_token, expire_date = self.get_access_token(client_id=client_id,
+                                                                                   client_secret=client_secret,
+                                                                                   scope= scope,
+                                                                                   redirect_uri=redirect_uri,
+                                                                                   timeout=timeout)
+            self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
+                                  "expire_date": expire_date}
+            with open(ACCESS_TOKEN_FILE, "w") as f:
+                json.dump(self.__credentials, f)
+        else:
+            with open(ACCESS_TOKEN_FILE, "r") as f:
+                self.__credentials = json.load(f)
+
+            if datetime.strptime(self.__credentials["expire_date"], '%d/%m/%Y') <= datetime.now():
+                access_token, refresh_token, expire_date = self.refresh_token(self._client_id,
+                                                                                    self.__client_secret,
+                                                                                    self.__credentials["refresh_token"])
+                self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
+                                      "expire_date": expire_date}
+                with open(ACCESS_TOKEN_FILE, "w") as f:
+                    json.dump(self.__credentials, f)
+
+        self.__headers = {
+            "Authorization": f"Bearer {self.__credentials['access_token']}",
+            "Client-Id": self._client_id,
+            "Content-Type": "application/json"
+        }
