@@ -1,11 +1,9 @@
 import logging
 
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
-from twitchapi.exception import TwitchMessageNotSentWarning
+from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
 from twitchapi.eventsub import EventSub
-from twitchapi.utils import TwitchEndpoint
-
-
+from twitchapi.utils import TwitchEndpoint, ThreadWithExc
 
 class ChatBot:
 
@@ -15,11 +13,9 @@ class ChatBot:
         self._client_id = client_id
         self.__client_secret = client_secret
 
-        self.__uri = AuthServer()
-        self.__event_sub = EventSub()
-        self.__uri.authentication(client_id=client_id, client_secret=client_secret, scope=["user:read:chat",
-         "user:write:chat",
-         "user:bot", "channel:bot"], timeout=timeout, redirect_uri=redirect_uri_auth)
+        self.__auth = AuthServer()
+        self.__auth.authentication(client_id=client_id, client_secret=client_secret, scope=["user:read:chat",
+         "user:write:chat", "user:bot", "channel:bot"], timeout=timeout, redirect_uri=redirect_uri_auth)
 
 
         self._bot_id = self._get_id(bot_name)
@@ -27,9 +23,15 @@ class ChatBot:
         self._channel_id = self._get_id(channel_name)
         logging.debug("Channel id: " + self._channel_id)
 
+        self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
+                                    subscription_types=["channel.chat.message"], auth_server=self.__auth)
+
+        self.__thread = ThreadWithExc(target=self.__run_event_server)
+        self.__thread.start()
+
 
     def _get_id(self, user_name: str) -> str:
-        data = self.__uri.get_request(endpoint=TwitchEndpoint.USER_ID + user_name)
+        data = self.__auth.get_request(endpoint=TwitchEndpoint.USER_ID + user_name)
         return data['data'][0]['id']
 
     def send_message(self, message: str, reply_message_id: str = None):
@@ -41,10 +43,21 @@ class ChatBot:
         if reply_message_id:
             data["reply_parent_message_id"] = reply_message_id
 
-        add_data = self.__uri.post_request(endpoint=TwitchEndpoint.SEND_MESSAGE, data=data)['data'][0]
+        add_data = self.__auth.post_request(endpoint=TwitchEndpoint.SEND_MESSAGE, data=data)['data'][0]
 
         if not add_data["is_sent"]:
             logging.warning(f"Message not sent: {add_data['drop_reason']}")
             drop_code = add_data["drop_reason"]["code"]
             drop_message = add_data["drop_reason"]["message"]
             raise TwitchMessageNotSentWarning(f"{drop_code}: {drop_message}")
+
+    def __run_event_server(self):
+        try:
+            logging.info("Run Event Server!")
+            self.__event_sub.run_forever()
+        except KillThreadException:
+            logging.info("Stop Event Server")
+
+
+    def stop_event_server(self):
+        self.__thread.raise_exc(KillThreadException)
