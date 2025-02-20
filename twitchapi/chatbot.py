@@ -1,70 +1,37 @@
-import json
 import logging
-import os
-from datetime import datetime
-from enum import Enum
-import requests
-from requests import Response
 
-from twitchapi.auth import UriServer, REDIRECT_URI, DEFAULT_TIMEOUT
-from twitchapi.exception import TwitchAuthentificationError, TwitchEndpointError, TwitchMessageNotSentWarning
-
-
-class TwitchEndpoint(Enum):
-    TWITCH_ENDPOINT = "https://api.twitch.tv/helix/"
-    USER_ID = "users?login="
-    SEND_MESSAGE = "chat/messages"
-
+from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
+from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
+from twitchapi.eventsub import EventSub
+from twitchapi.utils import TwitchEndpoint, ThreadWithExc
 
 class ChatBot:
-    ACCESS_TOKEN_FILE = ".access_token"
 
-    def __init__(self, client_id, client_secret, bot_name, channel_name, redirect_uri=REDIRECT_URI,
+    def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str,
+                 redirect_uri_auth: str = REDIRECT_URI_AUTH,
                  timeout=DEFAULT_TIMEOUT):
         self._client_id = client_id
         self.__client_secret = client_secret
 
-        self.__uri = UriServer()
-        self.__credentials = None
+        self.__auth = AuthServer()
+        self.__auth.authentication(client_id=client_id, client_secret=client_secret, scope=["user:read:chat",
+         "user:write:chat", "user:bot", "channel:bot"], timeout=timeout, redirect_uri=redirect_uri_auth)
 
-        if not os.path.exists(self.ACCESS_TOKEN_FILE):
-            access_token, refresh_token, expire_date = self.__uri.get_access_token(client_id=client_id,
-                                                                                   client_secret=client_secret,
-                                                                                   scope=["user:read:chat",
-                                                                                          "user:write:chat",
-                                                                                          "user:bot", "channel:bot"],
-                                                                                   redirect_uri=redirect_uri,
-                                                                                   timeout=timeout)
-            self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
-                                  "expire_date": expire_date}
-            with open(self.ACCESS_TOKEN_FILE, "w") as f:
-                json.dump(self.__credentials, f)
-        else:
-            with open(self.ACCESS_TOKEN_FILE, "r") as f:
-                self.__credentials = json.load(f)
-
-            if datetime.strptime(self.__credentials["expire_date"], '%d/%m/%Y') <= datetime.now():
-                access_token, refresh_token, expire_date = self.__uri.refresh_token(self._client_id,
-                                                                                    self.__client_secret,
-                                                                                    self.__credentials["refresh_token"])
-                self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
-                                      "expire_date": expire_date}
-                with open(self.ACCESS_TOKEN_FILE, "w") as f:
-                    json.dump(self.__credentials, f)
-
-        self.__headers = {
-            "Authorization": f"Bearer {self.__credentials['access_token']}",
-            "Client-Id": self._client_id,
-            "Content-Type": "application/json"
-        }
 
         self._bot_id = self._get_id(bot_name)
         logging.debug("Bot id: " + self._bot_id)
         self._channel_id = self._get_id(channel_name)
         logging.debug("Channel id: " + self._channel_id)
 
+        self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
+                                    subscription_types=["channel.chat.message"], auth_server=self.__auth)
+
+        self.__thread = ThreadWithExc(target=self.__run_event_server)
+        self.__thread.start()
+
+
     def _get_id(self, user_name: str) -> str:
-        data = self.__get_request(endpoint= TwitchEndpoint.USER_ID.value + user_name)
+        data = self.__auth.get_request(endpoint=TwitchEndpoint.USER_ID + user_name)
         return data['data'][0]['id']
 
     def send_message(self, message: str, reply_message_id: str = None):
@@ -76,7 +43,7 @@ class ChatBot:
         if reply_message_id:
             data["reply_parent_message_id"] = reply_message_id
 
-        add_data = self.__post_request(endpoint= TwitchEndpoint.SEND_MESSAGE.value, data=data)['data'][0]
+        add_data = self.__auth.post_request(endpoint=TwitchEndpoint.SEND_MESSAGE, data=data)['data'][0]
 
         if not add_data["is_sent"]:
             logging.warning(f"Message not sent: {add_data['drop_reason']}")
@@ -84,42 +51,13 @@ class ChatBot:
             drop_message = add_data["drop_reason"]["message"]
             raise TwitchMessageNotSentWarning(f"{drop_code}: {drop_message}")
 
-    def __get_request(self, endpoint: str) -> dict:
-        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT.value + endpoint
-        r = self.__check_request(requests.get, url_endpoint)
-        return r.json()
+    def __run_event_server(self):
+        try:
+            logging.info("Run Event Server!")
+            self.__event_sub.run_forever()
+        except KillThreadException:
+            logging.info("Stop Event Server")
 
-    def __post_request(self, endpoint: str, data: dict) -> dict:
-        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT.value + endpoint
-        r = self.__check_request(requests.post, url_endpoint, data)
-        return r.json()
 
-    def __check_request(self, request_function, url_endpoint: str, data: dict = None) -> Response:
-        params = {"url": url_endpoint, "headers": self.__headers}
-        if data:
-            params["json"] = data
-        response = request_function(**params)
-        if response.status_code != 200:
-            if response.status_code == 401:
-                self.__refresh_access_token()
-                response = request_function(**params)
-                if response.status_code != 200:
-                    logging.error(response.content)
-                    raise TwitchAuthentificationError("Something's wrong with the access token!!")
-            else:
-                raise TwitchEndpointError(
-                    f"The url {url_endpoint} is not correct or you don't have the rights to use it!")
-        return response
-
-    def __refresh_access_token(self):
-        access_token, refresh_token, expire_date = self.__uri.refresh_token(self._client_id, self.__client_secret,
-                                                                            self.__credentials["refresh_token"])
-        self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date}
-        with open(self.ACCESS_TOKEN_FILE, "w") as f:
-            json.dump(self.__credentials, f)
-
-        self.__headers = {
-            "Authorization": f"Bearer {self.__credentials['access_token']}",
-            "Client-Id": self._client_id,
-            "Content-Type": "application/json"
-        }
+    def stop_event_server(self):
+        self.__thread.raise_exc(KillThreadException)
