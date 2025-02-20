@@ -60,4 +60,4 @@ class ChatBot:
 
 
     def stop_event_server(self):
-        self.__thread.raise_exc(KillThreadException)
+        self.__event_sub.keep_running = False
