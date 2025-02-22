@@ -1,6 +1,8 @@
 import threading
 import inspect
 import ctypes
+from collections.abc import Callable
+
 
 class TwitchEndpoint:
     TWITCH_ENDPOINT = "https://api.twitch.tv/helix/"
@@ -9,6 +11,9 @@ class TwitchEndpoint:
     EVENTSUB_SUBSCRIPTION = "eventsub/subscriptions"
     TWITCH_WEBSOCKET_URL = "wss://eventsub.wss.twitch.tv/ws"
     TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/token"
+
+class TriggerSignal:
+    MESSAGE = "message"
 
 def _async_raise(tid, exctype):
     '''Raises an exception in the threads with id tid'''
@@ -76,3 +81,18 @@ class ThreadWithExc(threading.Thread):
         thread represented by this instance.
         """
         _async_raise( self._get_my_tid(), exctype )
+
+class TriggerMap:
+
+    def __init__(self):
+        self.__callbacks = {}
+
+    def add_trigger(self, callback:Callable, trigger_value:str):
+        if trigger_value in self.__callbacks:
+            raise KeyError(f"There's already a callback react to {trigger_value}!!")
+        self.__callbacks[trigger_value] = callback
+
+    def trigger(self, trigger_value, *args, **kwargs):
+        if trigger_value not in self.__callbacks:
+            raise KeyError(f"There's no callback react to {trigger_value}!!")
+        self.__callbacks[trigger_value](*args, **kwargs)
