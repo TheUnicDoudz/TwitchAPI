@@ -14,5 +14,7 @@
 - Event server manage subscription
 - Event server manage channel.chat.message subscription
 - Event server receive message
+- Store message in a sqlite database
+- EventServer trigger message event with ChatBot class
 
 
