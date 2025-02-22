@@ -241,6 +241,7 @@ class AuthServer():
         if response.status_code >= 300:
             if response.status_code == 401:
                 self.refresh_token()
+                params["headers"] = self.__headers
                 response = request_function(**params)
                 if response.status_code != 200:
                     logging.error(response.content)

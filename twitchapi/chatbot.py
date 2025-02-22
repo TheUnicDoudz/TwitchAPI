@@ -3,7 +3,7 @@ import logging
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
 from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
 from twitchapi.eventsub import EventSub
-from twitchapi.utils import TwitchEndpoint, ThreadWithExc
+from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal
 
 class ChatBot:
 
@@ -23,8 +23,11 @@ class ChatBot:
         self._channel_id = self._get_id(channel_name)
         logging.debug("Channel id: " + self._channel_id)
 
+        self.__trigger_map = TriggerMap()
+        self.__trigger_map.add_trigger(self.receive_message, TriggerSignal.MESSAGE)
+
         self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
-                                    subscription_types=["channel.chat.message"], auth_server=self.__auth)
+                                    subscription_types=["channel.chat.message"], auth_server=self.__auth, trigger_map=self.__trigger_map)
 
         self.__thread = ThreadWithExc(target=self.__run_event_server)
         self.__thread.start()
@@ -60,4 +63,8 @@ class ChatBot:
 
 
     def stop_event_server(self):
-        self.__thread.raise_exc(KillThreadException)
+        self.__event_sub.keep_running = False
+
+    def receive_message(self, message):
+        logging.info("Message receive")
+        logging.debug(message)
