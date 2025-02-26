@@ -1,22 +1,32 @@
+import json
 import logging
 
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
 from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
 from twitchapi.eventsub import EventSub
-from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal
+from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal, TwitchSubscriptionModel
+
 
 class ChatBot:
 
-    def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str,
+    def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH,
-                 timeout=DEFAULT_TIMEOUT):
+                 timeout=DEFAULT_TIMEOUT, right:list[str]=None):
         self._client_id = client_id
         self.__client_secret = client_secret
 
-        self.__auth = AuthServer()
-        self.__auth.authentication(client_id=client_id, client_secret=client_secret, scope=["user:read:chat",
-         "user:write:chat", "user:bot", "channel:bot"], timeout=timeout, redirect_uri=redirect_uri_auth)
+        self.__subscription = subscriptions
+        if not right:
+            self.__right = TwitchSubscriptionModel("", "").which_right(self.__subscription)
+        else:
+            self.__right = right
 
+        if "user:write:chat" not in self.__right:
+            self.__right.append("user:write:chat")
+
+        self.__auth = AuthServer()
+        self.__auth.authentication(client_id=client_id, client_secret=client_secret, scope=self.__right,
+                                   timeout=timeout, redirect_uri=redirect_uri_auth)
 
         self._bot_id = self._get_id(bot_name)
         logging.debug("Bot id: " + self._bot_id)
@@ -25,13 +35,14 @@ class ChatBot:
 
         self.__trigger_map = TriggerMap()
         self.__trigger_map.add_trigger(self.receive_message, TriggerSignal.MESSAGE)
+        self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT)
 
         self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
-                                    subscription_types=["channel.chat.message"], auth_server=self.__auth, trigger_map=self.__trigger_map)
+                                    subscription_types=self.__subscription, auth_server=self.__auth,
+                                    trigger_map=self.__trigger_map)
 
         self.__thread = ThreadWithExc(target=self.__run_event_server)
         self.__thread.start()
-
 
     def _get_id(self, user_name: str) -> str:
         data = self.__auth.get_request(endpoint=TwitchEndpoint.USER_ID + user_name)
@@ -61,10 +72,11 @@ class ChatBot:
         except KillThreadException:
             logging.info("Stop Event Server")
 
-
     def stop_event_server(self):
         self.__event_sub.keep_running = False
 
     def receive_message(self, message):
-        logging.info("Message receive")
-        logging.debug(message)
+        pass
+
+    def channel_reward(self, reward):
+        pass
