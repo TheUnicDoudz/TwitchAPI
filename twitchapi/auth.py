@@ -247,6 +247,7 @@ class AuthServer():
                     logging.error(response.content)
                     raise TwitchAuthentificationError("Something's wrong with the access token!!")
             else:
+                logging.error(response.content)
                 raise TwitchEndpointError(
                     f"The url {url_endpoint} is not correct or you don't have the rights to use it!")
         return response
@@ -263,7 +264,7 @@ class AuthServer():
                                                                              redirect_uri=redirect_uri,
                                                                              timeout=timeout)
             self.__credentials = {"access_token": access_token, "refresh_token": refresh_token,
-                                  "expire_date": expire_date}
+                                  "expire_date": expire_date, "scope": sorted(scope)}
             with open(ACCESS_TOKEN_FILE, "w") as f:
                 json.dump(self.__credentials, f)
 
@@ -276,11 +277,13 @@ class AuthServer():
             with open(ACCESS_TOKEN_FILE, "r") as f:
                 self.__credentials = json.load(f)
 
+            if sorted(scope) != self.__credentials["scope"] or datetime.strptime(self.__credentials["expire_date"], '%d/%m/%Y') <= datetime.now():
+                os.remove(ACCESS_TOKEN_FILE)
+                self.authentication(client_id, client_secret, scope, timeout, redirect_uri)
+                return
+
             self.__headers = {
                 "Authorization": f"Bearer {self.__credentials['access_token']}",
                 "Client-Id": self._client_id,
                 "Content-Type": "application/json"
             }
-
-            if datetime.strptime(self.__credentials["expire_date"], '%d/%m/%Y') <= datetime.now():
-                self.refresh_token()
