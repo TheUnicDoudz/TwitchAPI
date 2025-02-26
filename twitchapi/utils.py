@@ -2,7 +2,6 @@ import threading
 import inspect
 import ctypes
 from collections.abc import Callable
-from ctypes.wintypes import PRECT
 
 
 class TwitchEndpoint:
@@ -13,10 +12,13 @@ class TwitchEndpoint:
     USER_ID = "users?login="
     SEND_MESSAGE = "chat/messages"
     EVENTSUB_SUBSCRIPTION = "eventsub/subscriptions"
+    GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id="
 
 
 class TwitchSubscriptionType:
     MESSAGE = "channel.chat.message"
+
+    FOLLOW = "channel.follow"
 
     SUBSCRIBE = "channel.subscribe"
     SUBGIFT = "channel.subscription.gift"
@@ -52,6 +54,18 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.MESSAGE,
                 "condition": {"broadcaster_user_id": broadcaster_user_id, "user_id": user_id},
                 "version": "1"
+            }
+        }
+
+        self.FOLLOW = {
+            "right": ["moderator:read:followers"],
+            "payload": {
+                "type": TwitchSubscriptionType.FOLLOW,
+                "version": "2",
+                "condition": {
+                    "broadcaster_user_id": broadcaster_user_id,
+                    "moderator_user_id": user_id
+                }
             }
         }
 
@@ -105,7 +119,7 @@ class TwitchSubscriptionModel:
             "payload": {
                 "type": TwitchSubscriptionType.CHANNEL_POINT_ACTION,
                 "version": "1",
-                "condition": {"broadcaster_user_id": broadcaster_user_id}
+                "condition": {"broadcaster_user_id": broadcaster_user_id, "reward_id": ""}
             }
         }
 
@@ -199,9 +213,48 @@ class TwitchSubscriptionModel:
             }
         }
 
+    def which_right(self, subscription_list: list[str]) -> list[str]:
+        rights = []
+
+        for subscription in self.__dict__.values():
+            if subscription["payload"]["type"] in subscription_list:
+                rights += subscription["right"]
+
+        return list(set(rights))
+
+    def get_subscribe_data(self, subscription_type:str) -> dict[str, str|dict[str, str]]:
+        for subscription in self.__dict__.values():
+            if subscription["payload"]["type"] == subscription_type:
+                return subscription
+
 
 class TriggerSignal:
     MESSAGE = "message"
+
+    FOLLOW = "follow"
+
+    SUBSCRIBE = "subscribe"
+    SUBGIFT = "subgift"
+    RESUB_MESSAGE = "resub_message"
+
+    RAID = "raid"
+
+    CHANNEL_POINT_ACTION = "channel_point_action"
+
+    POLL_BEGIN = "poll_begin"
+    POLL_END = "poll_end"
+
+    PREDICTION_BEGIN = "prediction_begin"
+    PREDICTION_LOCK = "prediction_lock"
+    PREDICTION_END = "prediction_end"
+
+    VIP_ADD = "vip_add"
+
+    STREAM_ONLINE = "stream_online"
+    STREAM_OFFLINE = "stream_offline"
+
+    BITS = "bits"
+    CHEER = "cheer"
 
 
 def _async_raise(tid, exctype):
