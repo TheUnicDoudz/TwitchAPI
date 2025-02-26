@@ -7,7 +7,8 @@ from typing import Any
 from websocket import WebSocketApp
 
 from twitchapi.auth import AuthServer
-from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal
+from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal, TwitchSubscriptionModel, \
+    TwitchSubscriptionType
 from twitchapi.exception import KillThreadException
 import json
 import os
@@ -26,6 +27,8 @@ class EventSub(WebSocketApp):
         self._bot_id = bot_id
         self._channel_id = channel_id
         self._subscription_types = subscription_types
+
+        self.__tsm = TwitchSubscriptionModel(self._channel_id, self._bot_id)
 
         self.__db = sqlite3.connect(database=os.path.dirname(__file__) + "/database/TwitchDB", check_same_thread=False)
         self.__cursor = self.__db.cursor()
@@ -51,20 +54,25 @@ class EventSub(WebSocketApp):
             case "session_welcome":
                 logging.info("Receive session_welcome message")
                 self.__session_id = payload["session"]["id"]
-                for subscription in self._subscription_types:
-                    match subscription:
-                        case "channel.chat.message":
-                            logging.info("Subscription to get chat message")
-                            condition = {"broadcaster_user_id": self._channel_id, "user_id": self._bot_id}
-                            self.__subscription(subscription_type=subscription, condition=condition)
+                self.__subscription()
 
             case "notification":
                 logging.info("Receive notification message")
                 subscription_type = payload["subscription"]["type"]
+
                 match subscription_type:
-                    case "channel.chat.message":
+
+                    case TwitchSubscriptionType.MESSAGE:
                         logging.info("Process a message")
                         self.__process_message(payload=payload, date=msg_timestamp)
+
+                    case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
+                        logging.info("Process a channel point redeem")
+                        self.__process_channel_point_action(payload=payload)
+
+                    case TwitchSubscriptionType.FOLLOW:
+                        logging.info("Process a follow")
+                        self.__process_follow(payload=payload)
 
     def __process_message(self, payload: dict[str, Any], date):
         event = payload["event"]
@@ -92,18 +100,18 @@ class EventSub(WebSocketApp):
     def on_open(self, ws):
         logging.info(f"Connect to {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
 
-    def __subscription(self, subscription_type: str, condition: dict[str, str]):
-        logging.info(f"Subscription for {subscription_type}")
-        data = {
-            "type": subscription_type,
-            "version": "1",
-            "condition": condition,
-            "transport": {
-                "method": "websocket",
-                "session_id": self.__session_id
+    def __subscription(self):
+        for subscription in self._subscription_types:
+            logging.info(f"Subscription for {subscription}")
+            s_data = self.__tsm.get_subscribe_data(subscription)["payload"]
+            data = {
+                "transport": {
+                    "method": "websocket",
+                    "session_id": self.__session_id
+                }
             }
-        }
-        self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
+            data.update(s_data)
+            self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
 
     def __db__insert__message(self, id: str, user: str, message: str, date: str, parent_id: str = None,
                               thread_id: str = None, cheer: bool = False, emote: bool = False):
@@ -149,3 +157,29 @@ class EventSub(WebSocketApp):
                               WHERE date > (SELECT date FROM message WHERE id='{start_id}')"""
         recs = self.__lock_method(self.__cursor.execute, self.__lock_db, script)
         return recs
+
+    def __process_channel_point_action(self, payload:dict):
+        event = payload["event"]
+        user = event["user_name"]
+        reward_name = event["reward"]["title"]
+        self.__trigger_map.trigger(TriggerSignal.CHANNEL_POINT, reward={"user_name": user, "reward_name": reward_name})
+
+    def __process_follow(self, payload:dict):
+        user = payload["event"]["user_name"]
+        self.__trigger_map.trigger(TriggerSignal.FOLLOW, user_name=user)
+
+    def __process_subscribe(self, payload:dict):
+        event = payload["event"]
+        user = event["user_name"]
+        tier = event["tier"]
+        is_gift = event["is_gift"]
+        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE, sub_param={"user_name": user, "tier": tier, "is_gift": is_gift})
+
+    def __process_subgift(self, payload:dict):
+        event = payload["event"]
+        gifter = event["user_name"]
+        total = event["total"]
+        tier = event["tier"]
+        total_gift_sub = event["cumulative_total"]
+        self.__trigger_map.trigger(TriggerSignal.SUBGIFT, gift_param={"user_name": gifter, "tier": tier, "total": total,
+                                                                      "total_gift_sub": total_gift_sub})
