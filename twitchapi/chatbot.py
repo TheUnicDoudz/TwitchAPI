@@ -1,4 +1,3 @@
-import json
 import logging
 
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
@@ -35,7 +34,23 @@ class ChatBot:
 
         self.__trigger_map = TriggerMap()
         self.__trigger_map.add_trigger(self.receive_message, TriggerSignal.MESSAGE)
-        self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT)
+        self.__trigger_map.add_trigger(self.new_follow, TriggerSignal.FOLLOW)
+        self.__trigger_map.add_trigger(self.new_ban, TriggerSignal.BAN)
+        self.__trigger_map.add_trigger(self.new_subscribe, TriggerSignal.SUBSCRIBE)
+        self.__trigger_map.add_trigger(self.new_subgift, TriggerSignal.SUBGIFT)
+        self.__trigger_map.add_trigger(self.new_resub, TriggerSignal.RESUB_MESSAGE)
+        self.__trigger_map.add_trigger(self.raid_on_caster, TriggerSignal.RAID)
+        self.__trigger_map.add_trigger(self.raid_someone, TriggerSignal.RAID_SOMEONE)
+        self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT_ACTION)
+        self.__trigger_map.add_trigger(self.new_poll, TriggerSignal.POLL_BEGIN)
+        self.__trigger_map.add_trigger(self.poll_end, TriggerSignal.POLL_END)
+        self.__trigger_map.add_trigger(self.new_prediction, TriggerSignal.PREDICTION_BEGIN)
+        self.__trigger_map.add_trigger(self.prediction_lock, TriggerSignal.PREDICTION_LOCK)
+        self.__trigger_map.add_trigger(self.prediction_end, TriggerSignal.PREDICTION_END)
+        self.__trigger_map.add_trigger(self.new_vip, TriggerSignal.VIP_ADD)
+        self.__trigger_map.add_trigger(self.stream_online, TriggerSignal.STREAM_ONLINE)
+        self.__trigger_map.add_trigger(self.stream_offline, TriggerSignal.STREAM_OFFLINE)
+        self.__trigger_map.add_trigger(self.new_bits, TriggerSignal.BITS)
 
         self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
                                     subscription_types=self.__subscription, auth_server=self.__auth,
@@ -75,8 +90,57 @@ class ChatBot:
     def stop_event_server(self):
         self.__event_sub.keep_running = False
 
-    def receive_message(self, message):
+    def receive_message(self, id:str, user_name:str, text:str, cheer:bool, emote:bool, thread_id:str, parent_id:str):
         pass
 
-    def channel_reward(self, reward):
+    def channel_reward(self, user_name:str, reward_name:str):
+        pass
+
+    def new_follow(self, user_name:str):
+        pass
+
+    def new_subscribe(self, user_name:str, tier:str, is_gift:bool):
+        pass
+
+    def new_subgift(self, user_name:str, tier:str, total:int, total_gift_sub:int):
+        pass
+
+    def new_resub(self, user_name:str, tier:str, streak:int, total:int, duration:int, message:str):
+        pass
+
+    def raid_on_caster(self, source:str, nb_viewers:int):
+        pass
+
+    def raid_someone(self, dest:str, nb_viewers:int):
+        pass
+
+    def new_poll(self, title:str, choices:dict, bits_settings:dict, channel_point_settings:dict, start_date:str,
+                 end_date:str):
+        pass
+
+    def poll_end(self, title:str, choices:dict, status:str):
+        pass
+
+    def new_prediction(self, title:str, choices:dict, start_date:str, lock_date:str):
+        pass
+
+    def prediction_lock(self, title:str, result:dict):
+        pass
+
+    def prediction_end(self, title:str, result:dict, winning_pred:str):
+        pass
+
+    def new_ban(self, user_name:str, reason:str, start_ban:str, end_date:str, permanent:bool):
+        pass
+
+    def new_vip(self, user_name:str):
+        pass
+
+    def stream_online(self, type:str, start_time:str):
+        pass
+
+    def stream_offline(self):
+        pass
+
+    def new_bits(self, user_name:str, bits:int, type:str, power_up:str, message:str):
         pass
