@@ -20,6 +20,8 @@ class TwitchSubscriptionType:
 
     FOLLOW = "channel.follow"
 
+    BAN = "channel.ban"
+
     SUBSCRIBE = "channel.subscribe"
     SUBGIFT = "channel.subscription.gift"
     RESUB_MESSAGE = "channel.subscription.message"
@@ -41,8 +43,6 @@ class TwitchSubscriptionType:
     STREAM_OFFLINE = "stream.offline"
 
     BITS = "channel.bits.use"
-    CHEER = "channel.cheer"
-
 
 
 class TwitchSubscriptionModel:
@@ -65,6 +65,17 @@ class TwitchSubscriptionModel:
                 "condition": {
                     "broadcaster_user_id": broadcaster_user_id,
                     "moderator_user_id": user_id
+                }
+            }
+        }
+
+        self.FOLLOW = {
+            "right": ["channel:moderate"],
+            "payload": {
+                "type": TwitchSubscriptionType.BAN,
+                "version": "1",
+                "condition": {
+                    "broadcaster_user_id": broadcaster_user_id,
                 }
             }
         }
@@ -204,15 +215,6 @@ class TwitchSubscriptionModel:
             }
         }
 
-        self.CHEER = {
-            "right": ["bits:read"],
-            "payload": {
-                "type": TwitchSubscriptionType.CHEER,
-                "version": "1",
-                "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
-        }
-
     def which_right(self, subscription_list: list[str]) -> list[str]:
         rights = []
 
@@ -233,11 +235,14 @@ class TriggerSignal:
 
     FOLLOW = "follow"
 
+    BAN = "ban"
+
     SUBSCRIBE = "subscribe"
     SUBGIFT = "subgift"
     RESUB_MESSAGE = "resub_message"
 
     RAID = "raid"
+    RAID_SOMEONE = "raid_someone"
 
     CHANNEL_POINT_ACTION = "channel_point_action"
 
@@ -254,7 +259,6 @@ class TriggerSignal:
     STREAM_OFFLINE = "stream_offline"
 
     BITS = "bits"
-    CHEER = "cheer"
 
 
 def _async_raise(tid, exctype):
@@ -337,7 +341,7 @@ class TriggerMap:
             raise KeyError(f"There's already a callback react to {trigger_value}!!")
         self.__callbacks[trigger_value] = callback
 
-    def trigger(self, trigger_value, *args, **kwargs):
+    def trigger(self, trigger_value: str, param: dict=None):
         if trigger_value not in self.__callbacks:
             raise KeyError(f"There's no callback react to {trigger_value}!!")
-        self.__callbacks[trigger_value](*args, **kwargs)
+        self.__callbacks[trigger_value](**param)
