@@ -2,6 +2,7 @@ import threading
 import inspect
 import ctypes
 from collections.abc import Callable
+from multiprocessing.managers import rebuild_as_list
 
 
 class TwitchEndpoint:
@@ -9,10 +10,22 @@ class TwitchEndpoint:
     TWITCH_WEBSOCKET_URL = "wss://eventsub.wss.twitch.tv/ws"
     TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/token"
 
-    USER_ID = "users?login="
+    USER_ID = "users?login=<user_id>"
     SEND_MESSAGE = "chat/messages"
     EVENTSUB_SUBSCRIPTION = "eventsub/subscriptions"
-    GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id="
+    GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id=<user_id>"
+    GET_FOLLOWERS = "channels/followers?broadcaster_id=<user_id>"
+    GET_CHATTERS = "chat/chatters?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
+    BAN = "moderation/bans?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
+
+    @staticmethod
+    def apply_param(endpoint:str, **kwargs):
+        for param in kwargs:
+            marker = f"<{param}>"
+            if marker not in endpoint:
+                raise AttributeError(f"{param} is not supported by the endpoint {endpoint}")
+            endpoint.replace(marker, kwargs[param])
+        return endpoint
 
 
 class TwitchSubscriptionType:
