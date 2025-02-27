@@ -2,7 +2,6 @@ import threading
 import inspect
 import ctypes
 from collections.abc import Callable
-from ctypes.wintypes import PRECT
 
 
 class TwitchEndpoint:
@@ -10,13 +9,30 @@ class TwitchEndpoint:
     TWITCH_WEBSOCKET_URL = "wss://eventsub.wss.twitch.tv/ws"
     TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/token"
 
-    USER_ID = "users?login="
+    USER_ID = "users?login=<user_id>"
     SEND_MESSAGE = "chat/messages"
     EVENTSUB_SUBSCRIPTION = "eventsub/subscriptions"
+    GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id=<user_id>"
+    GET_FOLLOWERS = "channels/followers?broadcaster_id=<user_id>"
+    GET_CHATTERS = "chat/chatters?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
+    BAN = "moderation/bans?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
+
+    @staticmethod
+    def apply_param(endpoint:str, **kwargs):
+        for param in kwargs:
+            marker = f"<{param}>"
+            if marker not in endpoint:
+                raise AttributeError(f"{param} is not supported by the endpoint {endpoint}")
+            endpoint.replace(marker, kwargs[param])
+        return endpoint
 
 
 class TwitchSubscriptionType:
     MESSAGE = "channel.chat.message"
+
+    FOLLOW = "channel.follow"
+
+    BAN = "channel.ban"
 
     SUBSCRIBE = "channel.subscribe"
     SUBGIFT = "channel.subscription.gift"
@@ -39,8 +55,6 @@ class TwitchSubscriptionType:
     STREAM_OFFLINE = "stream.offline"
 
     BITS = "channel.bits.use"
-    CHEER = "channel.cheer"
-
 
 
 class TwitchSubscriptionModel:
@@ -52,6 +66,29 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.MESSAGE,
                 "condition": {"broadcaster_user_id": broadcaster_user_id, "user_id": user_id},
                 "version": "1"
+            }
+        }
+
+        self.FOLLOW = {
+            "right": ["moderator:read:followers"],
+            "payload": {
+                "type": TwitchSubscriptionType.FOLLOW,
+                "version": "2",
+                "condition": {
+                    "broadcaster_user_id": broadcaster_user_id,
+                    "moderator_user_id": user_id
+                }
+            }
+        }
+
+        self.FOLLOW = {
+            "right": ["channel:moderate"],
+            "payload": {
+                "type": TwitchSubscriptionType.BAN,
+                "version": "1",
+                "condition": {
+                    "broadcaster_user_id": broadcaster_user_id,
+                }
             }
         }
 
@@ -105,7 +142,7 @@ class TwitchSubscriptionModel:
             "payload": {
                 "type": TwitchSubscriptionType.CHANNEL_POINT_ACTION,
                 "version": "1",
-                "condition": {"broadcaster_user_id": broadcaster_user_id}
+                "condition": {"broadcaster_user_id": broadcaster_user_id, "reward_id": ""}
             }
         }
 
@@ -190,18 +227,50 @@ class TwitchSubscriptionModel:
             }
         }
 
-        self.CHEER = {
-            "right": ["bits:read"],
-            "payload": {
-                "type": TwitchSubscriptionType.CHEER,
-                "version": "1",
-                "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
-        }
+    def which_right(self, subscription_list: list[str]) -> list[str]:
+        rights = []
+
+        for subscription in self.__dict__.values():
+            if subscription["payload"]["type"] in subscription_list:
+                rights += subscription["right"]
+
+        return list(set(rights))
+
+    def get_subscribe_data(self, subscription_type:str) -> dict[str, str|dict[str, str]]:
+        for subscription in self.__dict__.values():
+            if subscription["payload"]["type"] == subscription_type:
+                return subscription
 
 
 class TriggerSignal:
     MESSAGE = "message"
+
+    FOLLOW = "follow"
+
+    BAN = "ban"
+
+    SUBSCRIBE = "subscribe"
+    SUBGIFT = "subgift"
+    RESUB_MESSAGE = "resub_message"
+
+    RAID = "raid"
+    RAID_SOMEONE = "raid_someone"
+
+    CHANNEL_POINT_ACTION = "channel_point_action"
+
+    POLL_BEGIN = "poll_begin"
+    POLL_END = "poll_end"
+
+    PREDICTION_BEGIN = "prediction_begin"
+    PREDICTION_LOCK = "prediction_lock"
+    PREDICTION_END = "prediction_end"
+
+    VIP_ADD = "vip_add"
+
+    STREAM_ONLINE = "stream_online"
+    STREAM_OFFLINE = "stream_offline"
+
+    BITS = "bits"
 
 
 def _async_raise(tid, exctype):
@@ -284,7 +353,7 @@ class TriggerMap:
             raise KeyError(f"There's already a callback react to {trigger_value}!!")
         self.__callbacks[trigger_value] = callback
 
-    def trigger(self, trigger_value, *args, **kwargs):
+    def trigger(self, trigger_value: str, param: dict=None):
         if trigger_value not in self.__callbacks:
             raise KeyError(f"There's no callback react to {trigger_value}!!")
-        self.__callbacks[trigger_value](*args, **kwargs)
+        self.__callbacks[trigger_value](**param)

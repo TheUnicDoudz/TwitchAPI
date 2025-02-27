@@ -10,5 +10,8 @@ class TwitchEndpointError(Exception):
 class TwitchMessageNotSentWarning(Exception):
     pass
 
+class TwitchEventSubError(Exception):
+    pass
+
 class KillThreadException(Exception):
     pass
