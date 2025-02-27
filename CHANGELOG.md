@@ -12,9 +12,10 @@
 - Add get and post request with check for ChatBot
 - Add send method for ChatBot
 - Event server manage subscription
-- Event server manage channel.chat.message subscription
-- Event server receive message
+- Event server manage any subscription
 - Store message in a sqlite database
 - EventServer trigger message event with ChatBot class
+- Add many subscription to receive notification
+- Add user action to interact with the chat
 
 

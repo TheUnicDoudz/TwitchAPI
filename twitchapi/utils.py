@@ -2,7 +2,6 @@ import threading
 import inspect
 import ctypes
 from collections.abc import Callable
-from multiprocessing.managers import rebuild_as_list
 
 
 class TwitchEndpoint:
