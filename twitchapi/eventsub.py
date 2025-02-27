@@ -218,7 +218,7 @@ class EventSub(WebSocketApp):
         emote = True if len(event["message"]["fragments"]) > 1 else False
         thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
         parent_id = event["reply"]['parent_message_id'] if event["reply"] else None
-        last_message = {"id": id, "user": user_name, "text": message, "cheer": cheer, "emote": emote,
+        last_message = {"id": id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
                         "thread_id": thread_id, "parent_id": parent_id}
         self.__trigger_map.trigger(TriggerSignal.MESSAGE, param=last_message)
         self.__db__insert__message(id=id, user=user_name, message=message, date=date,
@@ -234,7 +234,7 @@ class EventSub(WebSocketApp):
 
     def __process_follow(self, payload: dict):
         user = payload["event"]["user_name"]
-        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user": user})
+        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user})
 
     def __process_subscribe(self, payload: dict):
         event = payload["event"]
@@ -269,7 +269,7 @@ class EventSub(WebSocketApp):
         event = payload["event"]
         user_source = event["from_broadcaster_user_name"]
         nb_viewers = event["viewers"]
-        self.__trigger_map.trigger(TriggerSignal.RAID, param={"from": user_source, "nb_viewers": nb_viewers})
+        self.__trigger_map.trigger(TriggerSignal.RAID, param={"source": user_source, "nb_viewers": nb_viewers})
 
     def __process_raid_someone(self, payload: dict):
         event = payload["event"]
