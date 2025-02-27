@@ -3,13 +3,14 @@ import sqlite3
 import time
 from collections.abc import Callable
 from typing import Any
+from xml.sax import parse
 
 from websocket import WebSocketApp
 
 from twitchapi.auth import AuthServer
 from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal, TwitchSubscriptionModel, \
     TwitchSubscriptionType
-from twitchapi.exception import KillThreadException
+from twitchapi.exception import KillThreadException, TwitchEventSubError, TwitchMessageNotSentWarning
 import json
 import os
 from threading import Lock
@@ -74,20 +75,70 @@ class EventSub(WebSocketApp):
                         logging.info("Process a follow")
                         self.__process_follow(payload=payload)
 
-    def __process_message(self, payload: dict[str, Any], date):
-        event = payload["event"]
-        id = event['message_id']
-        user_name = event["chatter_user_login"]
-        message = event["message"]["text"]
-        cheer = True if event["cheer"] else False
-        emote = True if len(event["message"]["fragments"]) > 1 else False
-        thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
-        parent_id = event["reply"]['parent_message_id'] if event["reply"] else None
-        last_message = {"id": id, "user": user_name, "text": message, "cheer": cheer, "emote": emote,
-                        "thread_id": thread_id, "parent_id": parent_id}
-        self.__trigger_map.trigger(TriggerSignal.MESSAGE, message=last_message)
-        self.__db__insert__message(id=id, user=user_name, message=message, date=date,
-                                   parent_id=parent_id, thread_id=thread_id, cheer=cheer, emote=emote)
+                    case TwitchSubscriptionType.BAN:
+                        logging.info("Process a ban")
+                        self.__process_ban(payload=payload)
+
+                    case TwitchSubscriptionType.SUBSCRIBE:
+                        logging.info("Process a subscribe")
+                        self.__process_subscribe(payload=payload)
+
+                    case TwitchSubscriptionType.SUBGIFT:
+                        logging.info("Process a subgitf")
+                        self.__process_subgift(payload=payload)
+
+                    case TwitchSubscriptionType.RESUB_MESSAGE:
+                        logging.info("Process a resub message")
+                        self.__process_resub_message(payload=payload)
+
+                    case TwitchSubscriptionType.RAID:
+                        if payload["event"]["to_broadcaster_user_id"] == self._channel_id:
+                            logging.info("Process a incoming raid")
+                            self.__process_raid(payload=payload)
+                        else:
+                            logging.info("Process a raid")
+                            self.__process_raid_someone(payload=payload)
+
+                    case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
+                        logging.info("Process a channel action point")
+                        self.__process_channel_point_action(payload=payload)
+
+                    case TwitchSubscriptionType.POLL_BEGIN:
+                        logging.info("Process a poll begin")
+                        self.__process_poll_begin(payload=payload)
+
+                    case TwitchSubscriptionType.POLL_END:
+                        logging.info("Process a poll end")
+                        self.__process_poll_end(payload=payload)
+
+                    case TwitchSubscriptionType.PREDICTION_BEGIN:
+                        logging.info("Process a prediction begin")
+                        self.__process_prediction_begin(payload=payload)
+
+                    case TwitchSubscriptionType.PREDICTION_LOCK:
+                        logging.info("Process a prediction lock")
+                        self.__process_prediction_lock(payload=payload)
+
+                    case TwitchSubscriptionType.PREDICTION_END:
+                        logging.info("Process a prediction end")
+                        self.__process_prediction_end(payload=payload)
+
+                    case TwitchSubscriptionType.VIP_ADD:
+                        logging.info("Process a VIP added")
+                        self.__process_vip_add(payload=payload)
+
+                    case TwitchSubscriptionType.STREAM_ONLINE:
+                        logging.info("Process a stream online notification")
+                        self.__process_stream_online(payload=payload)
+
+                    case TwitchSubscriptionType.STREAM_OFFLINE:
+                        logging.info("Process a stream offline notification")
+                        self.__process_stream_offline()
+
+                    case TwitchSubscriptionType.BITS:
+                        logging.info("Process bits received")
+                        self.__process_bits(payload=payload)
+
 
     def on_error(self, ws, message):
         logging.error(message)
@@ -158,28 +209,154 @@ class EventSub(WebSocketApp):
         recs = self.__lock_method(self.__cursor.execute, self.__lock_db, script)
         return recs
 
-    def __process_channel_point_action(self, payload:dict):
+    def __process_message(self, payload: dict[str, Any], date):
+        event = payload["event"]
+        id = event['message_id']
+        user_name = event["chatter_user_login"]
+        message = event["message"]["text"]
+        cheer = True if event["cheer"] else False
+        emote = True if len(event["message"]["fragments"]) > 1 else False
+        thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
+        parent_id = event["reply"]['parent_message_id'] if event["reply"] else None
+        last_message = {"id": id, "user": user_name, "text": message, "cheer": cheer, "emote": emote,
+                        "thread_id": thread_id, "parent_id": parent_id}
+        self.__trigger_map.trigger(TriggerSignal.MESSAGE, param=last_message)
+        self.__db__insert__message(id=id, user=user_name, message=message, date=date,
+                                   parent_id=parent_id, thread_id=thread_id, cheer=cheer, emote=emote)
+
+
+    def __process_channel_point_action(self, payload: dict):
         event = payload["event"]
         user = event["user_name"]
         reward_name = event["reward"]["title"]
-        self.__trigger_map.trigger(TriggerSignal.CHANNEL_POINT, reward={"user_name": user, "reward_name": reward_name})
+        self.__trigger_map.trigger(TriggerSignal.CHANNEL_POINT_ACTION,
+                                   param={"user_name": user, "reward_name": reward_name})
 
-    def __process_follow(self, payload:dict):
+    def __process_follow(self, payload: dict):
         user = payload["event"]["user_name"]
-        self.__trigger_map.trigger(TriggerSignal.FOLLOW, user_name=user)
+        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user": user})
 
-    def __process_subscribe(self, payload:dict):
+    def __process_subscribe(self, payload: dict):
         event = payload["event"]
         user = event["user_name"]
         tier = event["tier"]
         is_gift = event["is_gift"]
-        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE, sub_param={"user_name": user, "tier": tier, "is_gift": is_gift})
+        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE, param={"user_name": user, "tier": tier,
+                                                                   "is_gift": is_gift})
 
-    def __process_subgift(self, payload:dict):
+    def __process_subgift(self, payload: dict):
         event = payload["event"]
         gifter = event["user_name"]
         total = event["total"]
         tier = event["tier"]
         total_gift_sub = event["cumulative_total"]
-        self.__trigger_map.trigger(TriggerSignal.SUBGIFT, gift_param={"user_name": gifter, "tier": tier, "total": total,
-                                                                      "total_gift_sub": total_gift_sub})
+        self.__trigger_map.trigger(TriggerSignal.SUBGIFT, param={"user_name": gifter, "tier": tier, "total": total,
+                                                                 "total_gift_sub": total_gift_sub})
+
+    def __process_resub_message(self, payload: dict):
+        event = payload["event"]
+        user = event["user_name"]
+        tier = event["tier"]
+        streak = event["streak_months"]
+        total = event["cumulative_months"]
+        duration = event["duration_months"]
+        message = event["message"]["text"]
+        self.__trigger_map.trigger(TriggerSignal.RESUB_MESSAGE, param={"user_name": user, "tier": tier,
+                                                                       "streak": streak, "total": total,
+                                                                       "duration": duration, "message": message})
+
+    def __process_raid(self, payload: dict):
+        event = payload["event"]
+        user_source = event["from_broadcaster_user_name"]
+        nb_viewers = event["viewers"]
+        self.__trigger_map.trigger(TriggerSignal.RAID, param={"from": user_source, "nb_viewers": nb_viewers})
+
+    def __process_raid_someone(self, payload: dict):
+        event = payload["event"]
+        user_dest = event["to_broadcaster_user_name"]
+        nb_viewers = event["viewers"]
+        self.__trigger_map.trigger(TriggerSignal.RAID_SOMEONE, param={"dest": user_dest, "nb_viewers": nb_viewers})
+
+    def __process_poll_begin(self, payload: dict):
+        event = payload["event"]
+        poll_title = event["title"]
+        choices = event["choices"]
+        bits_settings = event["bits_voting"]
+        channel_point_settings = event["channel_points_voting"]
+        start = event["started_at"]
+        end = event["ends_at"]
+        self.__trigger_map.trigger(TriggerSignal.POLL_BEGIN, param={"title": poll_title, "choices": choices,
+                                                                    "bits_settings": bits_settings,
+                                                                    "channel_point_settings": channel_point_settings,
+                                                                    "start_date": start, "end_date": end})
+
+    def __process_poll_end(self, payload: dict):
+        event = payload["event"]
+        poll_title = event["title"]
+        choices = event["choices"]
+        status = event["status"]
+        self.__trigger_map.trigger(TriggerSignal.POLL_END, param={"title": poll_title, "choices": choices,
+                                                                  "status": status})
+
+    def __process_prediction_begin(self, payload: dict):
+        event = payload["event"]
+        pred_title = event["title"]
+        choices = event["outcomes"]
+        start = event["started_at"]
+        lock = event["locks_at"]
+        self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "choices": choices,
+                                                                          "start_date": start, "lock_date": lock})
+
+    def __process_prediction_lock(self, payload: dict):
+        event = payload["event"]
+        pred_title = event["title"]
+        result = event["outcomes"]
+        self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "result": result})
+
+    def __process_prediction_end(self, payload: dict):
+        event = payload["event"]
+        pred_title = event["title"]
+        result = event["outcomes"]
+        winning = None
+        for r in result:
+            if r["id"] == event["winning_outcome_id"]:
+                winning = r["title"]
+                break
+        if not winning:
+            raise TwitchEventSubError(f"There's no winning prediction for {pred_title}")
+        self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "result": result,
+                                                                          "winning_pred": winning})
+
+    def __process_ban(self, payload: dict):
+        event = payload["event"]
+        user = event["user_name"]
+        reason = event["reason"]
+        ban_date = event["banned_at"]
+        end_ban = event["ends_at"]
+        permanent = event["is_permanent"]
+        self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "reason": reason, "start_ban": ban_date,
+                                                             "end_ban": end_ban, "permanent": permanent})
+
+    def __process_vip_add(self, payload:dict):
+        event = payload["event"]
+        user = event["user_name"]
+        self.__trigger_map.trigger(TriggerSignal.VIP_ADD, param={"user_name": user})
+
+    def __process_stream_online(self, payload:dict):
+        event = payload["event"]
+        type = event["type"]
+        start = event["started_at"]
+        self.__trigger_map.trigger(TriggerSignal.STREAM_ONLINE, param={"type": type, "start_time": start})
+
+    def __process_stream_offline(self):
+        self.__trigger_map.trigger(TriggerSignal.STREAM_OFFLINE)
+
+    def __process_bits(self, payload:dict):
+        event = payload["event"]
+        user = event["user_name"]
+        bits_number = event["bits"]
+        type = event["type"]
+        power_up = event["power_up"]
+        message = event["message"]["text"]
+        self.__trigger_map.trigger(TriggerSignal.BITS, param={"user_name": user, "bits": bits_number, "type": type,
+                                                              "power_up": power_up, "message": message})
