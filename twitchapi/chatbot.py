@@ -8,6 +8,8 @@ from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSi
 
 class ChatBot:
 
+    DEFAULT_RIGHT = ["moderator:read:followers", "user:write:chat", "moderator:read:chatters", "moderator:read:chatters"]
+
     def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH,
                  timeout=DEFAULT_TIMEOUT, right:list[str]=None):
@@ -20,8 +22,7 @@ class ChatBot:
         else:
             self.__right = right
 
-        if "user:write:chat" not in self.__right:
-            self.__right.append("user:write:chat")
+        self.__right += self.DEFAULT_RIGHT
 
         self.__auth = AuthServer()
         self.__auth.authentication(client_id=client_id, client_secret=client_secret, scope=self.__right,
@@ -61,6 +62,7 @@ class ChatBot:
 
     def _get_id(self, user_name: str) -> str:
         data = self.__auth.get_request(endpoint=TwitchEndpoint.USER_ID + user_name)
+        data = self.__auth.get_request(endpoint=TwitchEndpoint.apply_param(TwitchEndpoint.USER_ID, user_id=user_name))
         return data['data'][0]['id']
 
     def send_message(self, message: str, reply_message_id: str = None):
@@ -89,6 +91,23 @@ class ChatBot:
 
     def stop_event_server(self):
         self.__event_sub.keep_running = False
+
+    def get_follower(self):
+        return self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_FOLLOWERS,
+                                                                  user_id=self._channel_id))["data"]
+
+    def get_connected_users(self):
+        return self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_CHATTERS,
+                                                                  channel_id=self._channel_id,
+                                                                  moderator_id=self._bot_id))["data"]
+
+    def ban_user(self, user_id:str, reason:str, duration:int=None):
+        data = {"user_id": user_id, "reason": reason}
+        if duration:
+            data["duration"]= duration
+        self.__auth.post_request(TwitchEndpoint.apply_param(TwitchEndpoint.BAN, channel_id= self._channel_id,
+                                                            moderator_id= self._bot_id), data=data)
+
 
     def receive_message(self, id:str, user_name:str, text:str, cheer:bool, emote:bool, thread_id:str, parent_id:str):
         pass
