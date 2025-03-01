@@ -3,8 +3,8 @@ import logging
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
 from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
 from twitchapi.eventsub import EventSub
-from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal, TwitchSubscriptionModel
-
+from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel
+from twitchapi.utils import ThreadWithExc, TriggerMap
 
 class ChatBot:
     DEFAULT_RIGHT = ["moderator:read:followers", "user:write:chat", "moderator:read:chatters",

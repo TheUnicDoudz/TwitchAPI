@@ -14,7 +14,7 @@ import requests
 from requests import Response
 
 from twitchapi.exception import TwitchAuthorizationFailed, TwitchAuthentificationError, TwitchEndpointError
-from twitchapi.utils import TwitchEndpoint
+from twitchapi.twitchcom import TwitchEndpoint
 
 DEFAULT_ADDRESS = "0.0.0.0"
 DEFAULT_PORT = 8000
