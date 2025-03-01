@@ -14,6 +14,7 @@ from twitchapi.exception import KillThreadException, TwitchEventSubError, Twitch
 import json
 import os
 from threading import Lock
+from twitchapi.db import DataBaseManager, DataBaseTemplate
 
 SOURCE_ROOT = os.path.dirname(__file__)
 DEFAULT_DB_PATH = SOURCE_ROOT + "/database/TwitchDB.db"
@@ -39,16 +40,7 @@ class EventSub(WebSocketApp):
 
         self.__store_in_db = store_in_db
         if self.__store_in_db:
-            if not os.path.exists(db_path):
-                self.__initialize_db(db_path=db_path)
-
-            self.__db = sqlite3.connect(database=db_path, check_same_thread=False)
-            self.__cursor = self.__db.cursor()
-
-            self.__lock_db = Lock()
-
-            self.__thread = ThreadWithExc(target=self.__execute_script_db)
-            self.__thread.start()
+            self.__dbmanager = DataBaseManager(db_path, start_thread=True)
 
         self.__trigger_map = trigger_map
 
@@ -155,24 +147,11 @@ class EventSub(WebSocketApp):
 
     def on_close(self, ws, close_status_code, close_msg):
         logging.info("Close websocket")
-        self.__thread.raise_exc(KillThreadException)
-        self.__thread.join()
         if self.__store_in_db:
-            self.__db.close()
+            self.__dbmanager.close()
 
     def on_open(self, ws):
         logging.info(f"Connect to {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
-
-    def __initialize_db(self, db_path:str):
-        db = sqlite3.connect(database=db_path, check_same_thread=False)
-        cursor = db.cursor()
-
-        with open(SOURCE_ROOT + "db_script/init.sql", "r") as f:
-            script = f.read()
-
-        cursor.execute(script)
-        db.commit()
-        db.close()
 
     def __subscription(self):
         for subscription in self._subscription_types:
@@ -218,48 +197,21 @@ class EventSub(WebSocketApp):
 
     def __db__insert__message(self, id: str, user: str, message: str, date: str, parent_id: str = None,
                               thread_id: str = None, cheer: bool = False, emote: bool = False):
-        date_str = f"DATETIME('{date}', 'subsec')"
-        if parent_id:
-            if not thread_id:
-                raise ValueError(f"Missing thread_id value for parent_id {thread_id}")
-            script = f"""INSERT INTO message (id, user, message, date, parent_id, thread_id, cheer, emote)
-                        values({id},{user},{message},{date_str},{parent_id},{thread_id},{cheer},{emote})"""
-        else:
-            script = f"""INSERT INTO message (id, user, message, date, cheer, emote)
-                        values('{id}','{user}','{message}',{date_str},{cheer},{emote})"""
-        logging.info("Insert message data in database")
-        logging.debug(script)
+
         try:
-            self.__lock_method(self.__cursor.execute, self.__lock_db, script)
+            logging.info("Insert message data in database")
+            if parent_id:
+                if not thread_id:
+                    raise ValueError(f"Missing thread_id value for parent_id {thread_id}")
+                self.__dbmanager.execute_script(DataBaseTemplate.THREAD, id=id, user=user, message=message, date=date,
+                                                parent_id=parent_id, thread_id=thread_id, cheer=cheer, emote=emote)
+            else:
+                self.__dbmanager.execute_script(DataBaseTemplate.MESSAGE, id=id, user=user, message=message, date=date,
+                                                cheer=cheer, emote=emote)
             logging.info('Data ingested')
         except Exception as e:
-            logging.error(str(e.__class__) + ": " + str(e))
-
-    def __execute_script_db(self):
-        try:
-            while True:
-                logging.info("Try commiting ingested data...")
-                self.__lock_method(self.__db.commit, self.__lock_db)
-                logging.info("Data commited!")
-                time.sleep(10)
-        except KillThreadException:
-            if self.__lock_db.locked():
-                self.__lock_db.release()
-            logging.info("Commit last change on database")
-            self.__lock_method(self.__db.commit, self.__lock_db)
-            logging.info("Stop data ingestion")
-
-    def __lock_method(self, callback: Callable, lock: Lock, *args, **kwargs):
-        lock.acquire()
-        data = callback(*args, **kwargs)
-        lock.release()
-        return data
-
-    def get_message(self, start_id: str = None):
-        script = f"""SELECT * from message
-                              WHERE date > (SELECT date FROM message WHERE id='{start_id}')"""
-        recs = self.__lock_method(self.__cursor.execute, self.__lock_db, script)
-        return recs
+            logging.error(str(e.__class__.__name__) + ": " + str(e))
+            raise e
 
     def __process_message(self, payload: dict[str, Any], date:str):
         event = payload["event"]
