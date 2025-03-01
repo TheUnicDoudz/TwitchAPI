@@ -3,23 +3,26 @@ import sqlite3
 import time
 from collections.abc import Callable
 from typing import Any
-from xml.sax import parse
 
 from websocket import WebSocketApp
 
 from twitchapi.auth import AuthServer
 from twitchapi.utils import TwitchEndpoint, ThreadWithExc, TriggerMap, TriggerSignal, TwitchSubscriptionModel, \
     TwitchSubscriptionType
-from twitchapi.exception import KillThreadException, TwitchEventSubError, TwitchMessageNotSentWarning
+from twitchapi.exception import KillThreadException, TwitchEventSubError, TwitchAuthorizationFailed
 import json
 import os
 from threading import Lock
+
+DEFAULT_DB_PATH = os.path.dirname(__file__) + "/database/TwitchDB"
 
 
 class EventSub(WebSocketApp):
 
     def __init__(self, bot_id: str, channel_id: str, subscription_types: list[str], auth_server: AuthServer,
-                 trigger_map: TriggerMap = None):
+                 trigger_map: TriggerMap = None, store_in_db: bool = False, db_path: str = DEFAULT_DB_PATH,
+                 channel_point_subscription: list[str] = None):
+
         super().__init__(url=TwitchEndpoint.TWITCH_WEBSOCKET_URL, on_message=self.on_message, on_open=self.on_open,
                          on_close=self.on_close, on_error=self.on_error)
 
@@ -30,14 +33,17 @@ class EventSub(WebSocketApp):
         self._subscription_types = subscription_types
 
         self.__tsm = TwitchSubscriptionModel(self._channel_id, self._bot_id)
+        self.__channel_point_subscription = channel_point_subscription
 
-        self.__db = sqlite3.connect(database=os.path.dirname(__file__) + "/database/TwitchDB", check_same_thread=False)
-        self.__cursor = self.__db.cursor()
+        self.__store_in_db = store_in_db
+        if self.__store_in_db:
+            self.__db = sqlite3.connect(database=db_path, check_same_thread=False)
+            self.__cursor = self.__db.cursor()
 
-        self.__lock_db = Lock()
+            self.__lock_db = Lock()
 
-        self.__thread = ThreadWithExc(target=self.__execute_script_db)
-        self.__thread.start()
+            self.__thread = ThreadWithExc(target=self.__execute_script_db)
+            self.__thread.start()
 
         self.__trigger_map = trigger_map
 
@@ -139,7 +145,6 @@ class EventSub(WebSocketApp):
                         logging.info("Process bits received")
                         self.__process_bits(payload=payload)
 
-
     def on_error(self, ws, message):
         logging.error(message)
 
@@ -161,8 +166,37 @@ class EventSub(WebSocketApp):
                     "session_id": self.__session_id
                 }
             }
-            data.update(s_data)
-            self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
+
+            if subscription == TwitchSubscriptionType.CHANNEL_POINT_ACTION and self.__channel_point_subscription:
+                if self._channel_id != self._bot_id:
+                    raise TwitchAuthorizationFailed(
+                        "To subscribe to specific reward, the account used for authentication has "
+                            "to be the same as the broadcaster account!")
+
+                custom_reward = self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_CUSTOM_REWARD,
+                                                                                   user_id=self._channel_id))["data"]
+
+                for reward_subscription in self.__channel_point_subscription:
+                    logging.info(f"Subscription for {reward_subscription}")
+
+                    subscription_title = reward_subscription.replace(" ", "").lower()
+                    reward_id = None
+                    for reward in custom_reward:
+                        if reward["title"].replace(" ", "").lower() == subscription_title:
+                            reward_id = reward["id"]
+                            break
+
+                    if not reward_id:
+                        channel_name = self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.CHANNEL_INFO,
+                                                               channel_id=self._channel_id))["data"][0]["broadcaster_name"]
+                        raise KeyError(f"Custom reward {reward_subscription} doesn't exist for the channel {channel_name}")
+
+                    s_data["condition"]["reward_id"] = reward_id
+                    data.update(s_data)
+                    self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
+            else:
+                data.update(s_data)
+                self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
 
     def __db__insert__message(self, id: str, user: str, message: str, date: str, parent_id: str = None,
                               thread_id: str = None, cheer: bool = False, emote: bool = False):
@@ -221,9 +255,9 @@ class EventSub(WebSocketApp):
         last_message = {"id": id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
                         "thread_id": thread_id, "parent_id": parent_id}
         self.__trigger_map.trigger(TriggerSignal.MESSAGE, param=last_message)
-        self.__db__insert__message(id=id, user=user_name, message=message, date=date,
-                                   parent_id=parent_id, thread_id=thread_id, cheer=cheer, emote=emote)
-
+        if self.__store_in_db:
+            self.__db__insert__message(id=id, user=user_name, message=message, date=date,
+                                       parent_id=parent_id, thread_id=thread_id, cheer=cheer, emote=emote)
 
     def __process_channel_point_action(self, payload: dict):
         event = payload["event"]
@@ -337,12 +371,12 @@ class EventSub(WebSocketApp):
         self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "reason": reason, "start_ban": ban_date,
                                                              "end_ban": end_ban, "permanent": permanent})
 
-    def __process_vip_add(self, payload:dict):
+    def __process_vip_add(self, payload: dict):
         event = payload["event"]
         user = event["user_name"]
         self.__trigger_map.trigger(TriggerSignal.VIP_ADD, param={"user_name": user})
 
-    def __process_stream_online(self, payload:dict):
+    def __process_stream_online(self, payload: dict):
         event = payload["event"]
         type = event["type"]
         start = event["started_at"]
@@ -351,7 +385,7 @@ class EventSub(WebSocketApp):
     def __process_stream_offline(self):
         self.__trigger_map.trigger(TriggerSignal.STREAM_OFFLINE)
 
-    def __process_bits(self, payload:dict):
+    def __process_bits(self, payload: dict):
         event = payload["event"]
         user = event["user_name"]
         bits_number = event["bits"]

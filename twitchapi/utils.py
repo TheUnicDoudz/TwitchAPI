@@ -10,6 +10,7 @@ class TwitchEndpoint:
     TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/token"
 
     USER_ID = "users?login=<user_id>"
+    CHANNEL_INFO = "channels?broadcaster_id=<channel_id>"
     SEND_MESSAGE = "chat/messages"
     EVENTSUB_SUBSCRIPTION = "eventsub/subscriptions"
     GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id=<user_id>"
@@ -23,7 +24,7 @@ class TwitchEndpoint:
             marker = f"<{param}>"
             if marker not in endpoint:
                 raise AttributeError(f"{param} is not supported by the endpoint {endpoint}")
-            endpoint.replace(marker, kwargs[param])
+            endpoint = endpoint.replace(marker, kwargs[param])
         return endpoint
 
 
