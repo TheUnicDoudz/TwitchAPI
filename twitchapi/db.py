@@ -9,10 +9,45 @@ import time
 
 
 class DataBaseTemplate:
-    MESSAGE = ("INSERT INTO message (id, user, message, date, cheer, emote) values('<id>','<user>','<message>',"
-               "DATETIME('<date>', 'subsec'),<cheer>,<emote>)"),
-    THREAD = ("INSERT INTO message (id, user, message, date, cheer, emote) values('<id>','<user>','<message>',"
-              "DATETIME('<date>', 'subsec'),<parent_id>,<thread_id>,<cheer>,<emote>)")
+    MESSAGE = """INSERT INTO message (id, user, user_id, message, date, cheer, emote) 
+                 VALUES('<id>', '<user>', '<user_id>', '<message>', DATETIME('<date>', 'subsec') ,<cheer>, <emote>)"""
+
+    THREAD = """INSERT INTO message 
+                VALUES('<id>', '<user>', '<user_id>', '<message>', DATETIME('<date>', 'subsec'), '<parent_id>', 
+                       '<thread_id>', <cheer>, <emote>)"""
+
+    CHANNEL_POINT_ACTION = """INSERT INTO reward 
+                              VALUES('<id>', '<user>', '<user_id>', '<reward_name>', '<reward_id>', '<reward_prompt>',
+                                     '<status>', DATETIME('<date>', 'subsec'), DATETIME('<redeem_date>', 'subsec'), 
+                                     <cost>)"""
+
+    FOLLOW = """INSERT INTO follow 
+                VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), 
+                       <DATETIME('<follow_date>', 'subsec'))"""
+
+    SUBSCRIBE = """INSERT INTO subscribe (id, user, user_id, date, tier, is_gift, duration)
+                   VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), '<tier>', <is_gift>, 1)
+                   """
+
+    RESUB = """INSERT INTO subscribe
+               VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), '<message>', '<tier>', <streak>, 
+                      FALSE, <duration>, <total>)"""
+
+    SUBGIFT = """INSERT INTO subgift
+                 VALUES('<id>', <user>, <user_id>, DATETIME('<date>', 'subsec'), '<tier>', <total>, <total_gift>, 
+                        <is_anonymous>)"""
+
+    RAID = """INSERT INTO raid
+              VALUES('<id>', '<user_source>', '<user_source_id>', '<user_dest>', '<user_dest_id>', 
+                     DATETIME('<date>', 'subsec'), <nb_viewer>)"""
+
+    POLL = """INSERT INTO poll
+              VALUES('<id>', '<title>', <bits_enable>, <bits_amount_per_vote>, <channel_point_enable>, 
+                     <channel_point_amount_per_vote>, DATETIME('<start_date>', 'subsec'), 
+                     DATETIME('<end_date>', 'subsec'), '<status>')"""
+
+    POLL_CHOICES = """INSERT INTO poll_choices
+                      VALUES('<id>', '<title>', <bits_votes>, <channel_points_votes>, <votes>, '<poll_id>')"""
 
     @staticmethod
     def apply_param(script: str, **kwargs):
@@ -25,18 +60,94 @@ class DataBaseTemplate:
 
 
 class DataBaseManager:
-
     class __InitDataBaseTemplate:
         MESSAGE = """CREATE TABLE message (
-                         id VARCHAR(100) PRIMARY KEY NOT NULL,
+                         id VARCHAR(36) PRIMARY KEY NOT NULL,
                          user VARCHAR(100) NOT NULL,
+                         user_id VARCHAR(100) NOT NULL,
                          message TEXT NOT NULL,
-                         parent_id VARCHAR(100),
-                         thread_id VARCHAR(100),
+                         parent_id VARCHAR(36),
+                         thread_id VARCHAR(36),
                          cheer BOOLEAN NOT NULL,
                          date DATE NOT NULL,
                          emote BOOLEAN NOT NULL
                      )"""
+
+        CHANNEL_POINT_ACTION = """CREATE TABLE reward (
+                                      id VARCHAR(36) PRIMARY KEY NOT NULL,
+                                      user VARCHAR(100) NOT NULL,
+                                      user_id VARCHAR(100) NOT NULL,
+                                      reward_name VARCHAR(45) NOT NULL,
+                                      reward_id VARCHAR(36) NOT NULL,
+                                      reward_prompt TEXT,
+                                      status VARCHAR(20),
+                                      date DATE NOT NULL,
+                                      redeem_date DATE NOT NULL,
+                                      cost INT NOT NULL
+                                  )"""
+
+        FOLLOW = """CREATE TABLE follow (
+                        id VARCHAR(36) PRIMARY KEY NOT NULL,
+                        user VARCHAR(100) NOT NULL,
+                        user_id VARCHAR(100) NOT NULL,
+                        date DATE NOT NULL,
+                        follow_date DATE NOT NULL
+                    )"""
+
+        SUBSCRIBE = """CREATE TABLE subscribe (
+                           id VARCHAR(36) PRIMARY KEY NOT NULL,
+                           user VARCHAR(100),
+                           user_id VARCHAR(100),
+                           date DATE NOT NULL,
+                           message TEXT,
+                           tier VARCHAR(4) NOT NULL,
+                           streak INT,
+                           is_gift BOOLEAN NOT NULL,
+                           duration INT NOT NULL,
+                           total INT
+                       )"""
+
+        SUBGIFT = """CREATE TABLE subgift (
+                           id VARCHAR(36) PRIMARY KEY NOT NULL,
+                           user VARCHAR(100) NOT NULL,
+                           user_id VARCHAR(100) NOT NULL,
+                           date DATE NOT NULL,
+                           tier VARCHAR(4) NOT NULL,
+                           total INT NOT NULL,
+                           total_gift INT,
+                           is_anonymous BOOL NOT NULL
+                       )"""
+
+        RAID = """CREATE TABLE raid (
+                           id VARCHAR(36) PRIMARY KEY NOT NULL,
+                           user_source VARCHAR(100) NOT NULL,
+                           user_source_id VARCHAR(100) NOT NULL,
+                           user_dest VARCHAR(100) NOT NULL,
+                           user_dest_id VARCHAR(100) NOT NULL,
+                           date DATE NOT NULL,
+                           nb_viewer INT NOT NULL
+                  )"""
+
+        POLL = """CREATE TABLE poll (
+                           id VARCHAR(36) PRIMARY KEY NOT NULL,
+                           title TEXT NOT NULL,
+                           bits_enable BOOLEAN NOT NULL,
+                           bits_amount_per_vote INT,
+                           channel_point_enable BOOLEAN NOT NULL,
+                           channel_point_amount_per_vote INT,
+                           start_date DATE NOT NULL,
+                           end_date DATE NOT NULL
+                           status VARCHAR(20) NOT NULL
+                  )"""
+
+        POLL_CHOICES = """CREATE TABLE poll_choices (
+                            id VARCHAR(36) PRIMARY KEY NOT NULL,
+                            title TEXT NOT NULL,
+                            bits_votes INT,
+                            channel_points_votes INT,
+                            votes INT NOT NULL,
+                            poll_id VARCHAR(36) FOREIGN KEY REFERENCES poll(id)
+                  )"""
 
     def __init__(self, db_path: str, start_thread=False):
         if not os.path.exists(db_path):
@@ -59,10 +170,15 @@ class DataBaseManager:
         db.commit()
         db.close()
 
-    def execute_script(self, script:str, **kwargs):
-        script = DataBaseTemplate.apply_param(script, **kwargs)
-        logging.debug(script)
-        self.__lock_method(self.__cursor.execute, script)
+    def execute_script(self, script: str, **kwargs):
+        try:
+            script = DataBaseTemplate.apply_param(script, **kwargs)
+            logging.debug(script)
+            self.__lock_method(self.__cursor.execute, script)
+            logging.info('Data ingested')
+        except Exception as e:
+            logging.error(str(e.__class__.__name__) + ": " + str(e))
+            raise e
 
     def commit(self):
         logging.info("Try commiting ingested data...")

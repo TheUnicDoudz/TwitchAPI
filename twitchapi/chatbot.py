@@ -121,7 +121,7 @@ class ChatBot:
     def new_subscribe(self, user_name: str, tier: str, is_gift: bool):
         pass
 
-    def new_subgift(self, user_name: str, tier: str, total: int, total_gift_sub: int):
+    def new_subgift(self, user_name: str, tier: str, total: int, total_gift_sub: int, is_anonymous: bool):
         pass
 
     def new_resub(self, user_name: str, tier: str, streak: int, total: int, duration: int, message: str):
