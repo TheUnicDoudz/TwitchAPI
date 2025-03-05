@@ -13,13 +13,31 @@ class TwitchEndpoint:
     BAN = "moderation/bans?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
 
     @staticmethod
-    def apply_param(endpoint:str, **kwargs):
+    def apply_param(endpoint: str, **kwargs):
         for param in kwargs:
             marker = f"<{param}>"
             if marker not in endpoint:
                 raise AttributeError(f"{param} is not supported by the endpoint {endpoint}")
             endpoint = endpoint.replace(marker, kwargs[param])
         return endpoint
+
+
+class TwitchRightType:
+    USER_READ_CHAT = "user:read:chat"
+    USER_BOT = "user:bot"
+    CHANNEL_BOT = "channel:bot"
+    MODERATOR_READ_FOLLOWERS = "moderator:read:followers"
+    CHANNEL_MODERATE = "channel:moderate"
+    CHANNEL_READ_SUBSCRIPTIONS = "channel:read:subscriptions"
+    CHANNEL_READ_REDEMPTIONS = "channel:read:redemptions"
+    CHANNEL_MANAGE_REDEMPTIONS = "channel:manage:redemptions"
+    CHANNEL_READ_POLLS = "channel:read:polls"
+    CHANNEL_MANAGE_POLLS = "channel:manage:polls"
+    CHANNEL_READ_PREDICTIONS = "channel:read:predictions"
+    CHANNEL_MANAGE_PREDICTIONS = "channel:manage:predictions"
+    CHANNEL_READ_VIPS = "channel:read:vips"
+    CHANNEL_MANAGE_VIPS = "channel:manage:vips"
+    BITS_READ = "bits:read"
 
 
 class TwitchSubscriptionType:
@@ -57,7 +75,7 @@ class TwitchSubscriptionModel:
 
     def __init__(self, broadcaster_user_id, user_id):
         self.MESSAGE = {
-            "right": ["user:read:chat", "user:bot", "channel:bot"],
+            "right": [TwitchRightType.USER_READ_CHAT, TwitchRightType.USER_BOT, TwitchRightType.CHANNEL_BOT],
             "payload": {
                 "type": TwitchSubscriptionType.MESSAGE,
                 "condition": {"broadcaster_user_id": broadcaster_user_id, "user_id": user_id},
@@ -66,7 +84,7 @@ class TwitchSubscriptionModel:
         }
 
         self.FOLLOW = {
-            "right": ["moderator:read:followers"],
+            "right": [TwitchRightType.MODERATOR_READ_FOLLOWERS],
             "payload": {
                 "type": TwitchSubscriptionType.FOLLOW,
                 "version": "2",
@@ -78,7 +96,7 @@ class TwitchSubscriptionModel:
         }
 
         self.BAN = {
-            "right": ["channel:moderate"],
+            "right": [TwitchRightType.CHANNEL_MODERATE],
             "payload": {
                 "type": TwitchSubscriptionType.BAN,
                 "version": "1",
@@ -89,7 +107,7 @@ class TwitchSubscriptionModel:
         }
 
         self.SUBSCRIBE = {
-            "right": ["channel:read:subscriptions"],
+            "right": [TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.SUBSCRIBE,
                 "version": "1",
@@ -98,7 +116,7 @@ class TwitchSubscriptionModel:
         }
 
         self.SUBGIFT = {
-            "right": ["channel:read:subscriptions"],
+            "right": [TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.SUBGIFT,
                 "version": "1",
@@ -107,7 +125,7 @@ class TwitchSubscriptionModel:
         }
 
         self.RESUB_MESSAGE = {
-            "right": ["channel:read:subscriptions"],
+            "right": [TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.RESUB_MESSAGE,
                 "version": "1",
@@ -134,7 +152,7 @@ class TwitchSubscriptionModel:
         }
 
         self.CHANNEL_POINT_ACTION = {
-            "right": ["channel:read:redemptions", "channel:manage:redemptions"],
+            "right": [TwitchRightType.CHANNEL_READ_REDEMPTIONS, TwitchRightType.CHANNEL_MANAGE_REDEMPTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.CHANNEL_POINT_ACTION,
                 "version": "1",
@@ -143,7 +161,7 @@ class TwitchSubscriptionModel:
         }
 
         self.POLL_BEGIN = {
-            "right": ["channel:read:polls", "channel:manage:polls"],
+            "right": [TwitchRightType.CHANNEL_READ_POLLS, TwitchRightType.CHANNEL_MANAGE_POLLS],
             "payload": {
                 "type": TwitchSubscriptionType.POLL_BEGIN,
                 "version": "1",
@@ -152,7 +170,7 @@ class TwitchSubscriptionModel:
         }
 
         self.POLL_END = {
-            "right": ["channel:read:polls", "channel:manage:polls"],
+            "right": [TwitchRightType.CHANNEL_READ_POLLS, TwitchRightType.CHANNEL_MANAGE_POLLS],
             "payload": {
                 "type": TwitchSubscriptionType.POLL_END,
                 "version": "1",
@@ -161,7 +179,7 @@ class TwitchSubscriptionModel:
         }
 
         self.PREDICTION_BEGIN = {
-            "right": ["channel:read:predictions", "channel:manage:predictions"],
+            "right": [TwitchRightType.CHANNEL_READ_PREDICTIONS, TwitchRightType.CHANNEL_MANAGE_PREDICTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.PREDICTION_BEGIN,
                 "version": "1",
@@ -170,7 +188,7 @@ class TwitchSubscriptionModel:
         }
 
         self.PREDICTION_LOCK = {
-            "right": ["channel:read:predictions", "channel:manage:predictions"],
+            "right": [TwitchRightType.CHANNEL_READ_PREDICTIONS, TwitchRightType.CHANNEL_MANAGE_PREDICTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.PREDICTION_LOCK,
                 "version": "1",
@@ -179,7 +197,7 @@ class TwitchSubscriptionModel:
         }
 
         self.PREDICTION_END = {
-            "right": ["channel:read:predictions", "channel:manage:predictions"],
+            "right": [TwitchRightType.CHANNEL_READ_PREDICTIONS, TwitchRightType.CHANNEL_MANAGE_PREDICTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.PREDICTION_END,
                 "version": "1",
@@ -188,7 +206,7 @@ class TwitchSubscriptionModel:
         }
 
         self.VIP_ADD = {
-            "right": ["channel:read:vips", "channel:manage:vips"],
+            "right": [TwitchRightType.CHANNEL_READ_VIPS, TwitchRightType.CHANNEL_MANAGE_VIPS],
             "payload": {
                 "type": TwitchSubscriptionType.VIP_ADD,
                 "version": "1",
@@ -197,7 +215,7 @@ class TwitchSubscriptionModel:
         }
 
         self.VIP_REMOVE = {
-            "right": ["channel:read:vips", "channel:manage:vips"],
+            "right": [TwitchRightType.CHANNEL_READ_VIPS, TwitchRightType.CHANNEL_MANAGE_VIPS],
             "payload": {
                 "type": TwitchSubscriptionType.VIP_REMOVE,
                 "version": "1",
@@ -224,7 +242,7 @@ class TwitchSubscriptionModel:
         }
 
         self.BITS = {
-            "right": ["bits:read"],
+            "right": [TwitchRightType.BITS_READ],
             "payload": {
                 "type": TwitchSubscriptionType.BITS,
                 "version": "beta",
@@ -241,7 +259,7 @@ class TwitchSubscriptionModel:
 
         return list(set(rights))
 
-    def get_subscribe_data(self, subscription_type:str) -> dict[str, str|dict[str, str]]:
+    def get_subscribe_data(self, subscription_type: str) -> dict[str, str | dict[str, str]]:
         for subscription in self.__dict__.values():
             if subscription["payload"]["type"] == subscription_type:
                 return subscription
