@@ -17,5 +17,6 @@
 - EventServer trigger message event with ChatBot class
 - Add many subscription to receive notification
 - Add user action to interact with the chat
-
+- Stream information are stored in a SQLite3 data base
+- Add class to standardize twitch right
 
