@@ -49,6 +49,26 @@ class DataBaseTemplate:
     POLL_CHOICES = """INSERT INTO poll_choices
                       VALUES('<id>', '<title>', <bits_votes>, <channel_points_votes>, <votes>, '<poll_id>')"""
 
+    PREDICTION = """INSERT INTO prediction
+                    VALUES('<id>', '<title>', '<winning_outcome>', '<winning_outcome_id>', 
+                           DATETIME('<start_date>', 'subsec'), DATETIME('<end_date>', 'subsec'), '<status>')"""
+
+    PREDICTION_CHOICES = """INSERT INTO poll_choices
+                            VALUES('<id>', '<title>', <nb_users>, <channel_points>, '<prediction_id>')"""
+
+    BAN = """INSERT INTO ban
+             VALUES('<id>', '<user>', '<user_id>', '<moderator>', '<moderator_id>', '<reason>', 
+                    DATETIME('<start_ban>', 'subsec'), DATETIME('<end_ban>', 'subsec'), <is_permanent>)"""
+
+    ADD_VIP = """INSERT INTO vip
+             VALUES('<user_id>', '<user>', DATETIME('<date>', 'subsec'))"""
+
+    REMOVE_VIP = """DELETE FROM vip WHERE user_id='<user_id>'"""
+
+    BITS = """INSERT INTO bits
+              VALUES('<id>', '<user_id>', '<user>', '<type>', <nb_bits>, <power_up>, <message>, 
+                     DATETIME('<date>', 'subsec'))"""
+
     @staticmethod
     def apply_param(script: str, **kwargs):
         for param in kwargs:
@@ -108,45 +128,92 @@ class DataBaseManager:
                        )"""
 
         SUBGIFT = """CREATE TABLE subgift (
-                           id VARCHAR(36) PRIMARY KEY NOT NULL,
-                           user VARCHAR(100) NOT NULL,
-                           user_id VARCHAR(100) NOT NULL,
-                           date DATE NOT NULL,
-                           tier VARCHAR(4) NOT NULL,
-                           total INT NOT NULL,
-                           total_gift INT,
-                           is_anonymous BOOL NOT NULL
-                       )"""
+                         id VARCHAR(36) PRIMARY KEY NOT NULL,
+                         user VARCHAR(100) NOT NULL,
+                         user_id VARCHAR(100) NOT NULL,
+                         date DATE NOT NULL,
+                         tier VARCHAR(4) NOT NULL,
+                         total INT NOT NULL,
+                         total_gift INT,
+                         is_anonymous BOOL NOT NULL
+                     )"""
 
         RAID = """CREATE TABLE raid (
-                           id VARCHAR(36) PRIMARY KEY NOT NULL,
-                           user_source VARCHAR(100) NOT NULL,
-                           user_source_id VARCHAR(100) NOT NULL,
-                           user_dest VARCHAR(100) NOT NULL,
-                           user_dest_id VARCHAR(100) NOT NULL,
-                           date DATE NOT NULL,
-                           nb_viewer INT NOT NULL
+                      id VARCHAR(36) PRIMARY KEY NOT NULL,
+                      user_source VARCHAR(100) NOT NULL,
+                      user_source_id VARCHAR(100) NOT NULL,
+                      user_dest VARCHAR(100) NOT NULL,
+                      user_dest_id VARCHAR(100) NOT NULL,
+                      date DATE NOT NULL,
+                      nb_viewer INT NOT NULL
                   )"""
 
         POLL = """CREATE TABLE poll (
-                           id VARCHAR(36) PRIMARY KEY NOT NULL,
-                           title TEXT NOT NULL,
-                           bits_enable BOOLEAN NOT NULL,
-                           bits_amount_per_vote INT,
-                           channel_point_enable BOOLEAN NOT NULL,
-                           channel_point_amount_per_vote INT,
-                           start_date DATE NOT NULL,
-                           end_date DATE NOT NULL
-                           status VARCHAR(20) NOT NULL
+                      id VARCHAR(36) PRIMARY KEY NOT NULL,
+                      title TEXT NOT NULL,
+                      bits_enable BOOLEAN NOT NULL,
+                      bits_amount_per_vote INT,
+                      channel_point_enable BOOLEAN NOT NULL,
+                      channel_point_amount_per_vote INT,
+                      start_date DATE NOT NULL,
+                      end_date DATE NOT NULL,
+                      status VARCHAR(20) NOT NULL
                   )"""
 
         POLL_CHOICES = """CREATE TABLE poll_choices (
+                              id VARCHAR(36) PRIMARY KEY NOT NULL,
+                              title TEXT NOT NULL,
+                              bits_votes INT,
+                              channel_points_votes INT,
+                              votes INT NOT NULL,
+                              poll_id VARCHAR(36) FOREIGN KEY REFERENCES poll(id)
+                          )"""
+
+        PREDICTION = """CREATE TABLE prediction (
                             id VARCHAR(36) PRIMARY KEY NOT NULL,
                             title TEXT NOT NULL,
-                            bits_votes INT,
-                            channel_points_votes INT,
-                            votes INT NOT NULL,
-                            poll_id VARCHAR(36) FOREIGN KEY REFERENCES poll(id)
+                            winning_outcome TEXT,
+                            winning_outcome_id VARCHAR(36),
+                            start_date DATE NOT NULL,
+                            end_date DATE NOT NULL,
+                            status VARCHAR(20) NOT NULL
+                        )"""
+
+        PREDICTION_CHOICES = """CREATE TABLE prediction_choices (
+                                    id VARCHAR(36) PRIMARY KEY NOT NULL,
+                                    title TEXT NOT NULL,
+                                    nb_users INT NOT NULL,
+                                    channel_points INT NOT NULL,
+                                    prediction_id VARCHAR(36) FOREIGN KEY REFERENCES prediction(id)
+                                )"""
+
+        BAN = """CREATE TABLE ban (
+                     id VARCHAR(36) PRIMARY KEY NOT NULL,
+                     user VARCHAR(100) NOT NULL,
+                     user_id VARCHAR(100) NOT NULL,
+                     moderator VARCHAR(100) NOT NULL,
+                     moderator_id VARCHAR(100) NOT NULL,
+                     reason TEXT NOT NULL,
+                     start_ban DATE NOT NULL,
+                     end_ban DATE NOT NULL,
+                     is_permanent BOOLEAN NOT NULL
+                 )"""
+
+        VIP = """CREATE TABLE vip (
+                     user_id VARCHAR(100) PRIMARY KEY NOT NULL,
+                     user VARCHAR(100) NOT NULL,
+                     date DATE NOT NULL,
+                 )"""
+
+        BITS = """CREATE TABLE bits(
+                      id VARCHAR(36) PRIMARY KEY NOT NULL,
+                      user_id VARCHAR(100) NOT NULL,
+                      user VARCHAR(100) NOT NULL,
+                      type VARCHAR(10) NOT NULL,
+                      nb_bits INT NOT NULL,
+                      power_up VARCHAR(20),
+                      message TEXT,
+                      date DATE NOT NULL
                   )"""
 
     def __init__(self, db_path: str, start_thread=False):

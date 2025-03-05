@@ -45,6 +45,7 @@ class TwitchSubscriptionType:
     PREDICTION_END = "channel.prediction.end"
 
     VIP_ADD = "channel.vip.add"
+    VIP_REMOVE = "channel.vip.remove"
 
     STREAM_ONLINE = "stream.online"
     STREAM_OFFLINE = "stream.offline"
@@ -76,7 +77,7 @@ class TwitchSubscriptionModel:
             }
         }
 
-        self.FOLLOW = {
+        self.BAN = {
             "right": ["channel:moderate"],
             "payload": {
                 "type": TwitchSubscriptionType.BAN,
@@ -195,6 +196,15 @@ class TwitchSubscriptionModel:
             }
         }
 
+        self.VIP_REMOVE = {
+            "right": ["channel:read:vips", "channel:manage:vips"],
+            "payload": {
+                "type": TwitchSubscriptionType.VIP_REMOVE,
+                "version": "1",
+                "condition": {"broadcaster_user_id": broadcaster_user_id}
+            }
+        }
+
         self.STREAM_ONLINE = {
             "right": [],
             "payload": {
@@ -261,6 +271,7 @@ class TriggerSignal:
     PREDICTION_END = "prediction_end"
 
     VIP_ADD = "vip_add"
+    VIP_REMOVE = "vip_remove"
 
     STREAM_ONLINE = "stream_online"
     STREAM_OFFLINE = "stream_offline"

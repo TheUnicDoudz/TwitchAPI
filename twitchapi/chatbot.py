@@ -49,6 +49,7 @@ class ChatBot:
         self.__trigger_map.add_trigger(self.prediction_lock, TriggerSignal.PREDICTION_LOCK)
         self.__trigger_map.add_trigger(self.prediction_end, TriggerSignal.PREDICTION_END)
         self.__trigger_map.add_trigger(self.new_vip, TriggerSignal.VIP_ADD)
+        self.__trigger_map.add_trigger(self.remove_vip, TriggerSignal.VIP_REMOVE)
         self.__trigger_map.add_trigger(self.stream_online, TriggerSignal.STREAM_ONLINE)
         self.__trigger_map.add_trigger(self.stream_offline, TriggerSignal.STREAM_OFFLINE)
         self.__trigger_map.add_trigger(self.new_bits, TriggerSignal.BITS)
@@ -149,10 +150,13 @@ class ChatBot:
     def prediction_end(self, title: str, result: dict, winning_pred: str):
         pass
 
-    def new_ban(self, user_name: str, reason: str, start_ban: str, end_date: str, permanent: bool):
+    def new_ban(self, user_name: str, moderator_name:str, reason: str, start_ban: str, end_date: str, permanent: bool):
         pass
 
     def new_vip(self, user_name: str):
+        pass
+
+    def remove_vip(self, user_name: str):
         pass
 
     def stream_online(self, type: str, start_time: str):

@@ -1,9 +1,5 @@
 import logging
-import sqlite3
-import time
-from collections.abc import Callable
-from os import environ
-from socket import send_fds
+from sys import exception
 from typing import Any
 
 from websocket import WebSocketApp
@@ -67,84 +63,87 @@ class EventSub(WebSocketApp):
                 subscription_type = payload["subscription"]["type"]
                 event = payload["event"]
                 id = payload["subscription"]["id"]
+                try:
+                    match subscription_type:
 
-                match subscription_type:
+                        case TwitchSubscriptionType.MESSAGE:
+                            logging.info("Process a message")
+                            self.__process_message(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.MESSAGE:
-                        logging.info("Process a message")
-                        self.__process_message(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
+                            logging.info("Process a channel point redeem")
+                            self.__process_channel_point_action(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
-                        logging.info("Process a channel point redeem")
-                        self.__process_channel_point_action(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.FOLLOW:
+                            logging.info("Process a follow")
+                            self.__process_follow(event=event, date=msg_timestamp, id=id)
 
-                    case TwitchSubscriptionType.FOLLOW:
-                        logging.info("Process a follow")
-                        self.__process_follow(event=event, date=msg_timestamp, id=id)
+                        case TwitchSubscriptionType.BAN:
+                            logging.info("Process a ban")
+                            self.__process_ban(event=event, id=id)
 
-                    case TwitchSubscriptionType.BAN:
-                        logging.info("Process a ban")
-                        self.__process_ban(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.SUBSCRIBE:
+                            logging.info("Process a subscribe")
+                            self.__process_subscribe(event=event, date=msg_timestamp, id=id)
 
-                    case TwitchSubscriptionType.SUBSCRIBE:
-                        logging.info("Process a subscribe")
-                        self.__process_subscribe(event=event, date=msg_timestamp, id=id)
+                        case TwitchSubscriptionType.SUBGIFT:
+                            logging.info("Process a subgitf")
+                            self.__process_subgift(event=event, date=msg_timestamp, id=id)
 
-                    case TwitchSubscriptionType.SUBGIFT:
-                        logging.info("Process a subgitf")
-                        self.__process_subgift(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.RESUB_MESSAGE:
+                            logging.info("Process a resub message")
+                            self.__process_resub_message(event=event, date=msg_timestamp, id=id)
 
-                    case TwitchSubscriptionType.RESUB_MESSAGE:
-                        logging.info("Process a resub message")
-                        self.__process_resub_message(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.RAID:
+                            if payload["event"]["to_broadcaster_user_id"] == self._channel_id:
+                                logging.info("Process a incoming raid")
+                                self.__process_raid(event=event, date=msg_timestamp, id=id)
+                            else:
+                                logging.info("Process a raid")
+                                self.__process_raid_someone(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.RAID:
-                        if payload["event"]["to_broadcaster_user_id"] == self._channel_id:
-                            logging.info("Process a incoming raid")
-                            self.__process_raid(event=event, date=msg_timestamp)
-                        else:
-                            logging.info("Process a raid")
-                            self.__process_raid_someone(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
+                            logging.info("Process a channel action point")
+                            self.__process_channel_point_action(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
-                        logging.info("Process a channel action point")
-                        self.__process_channel_point_action(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.POLL_BEGIN:
+                            logging.info("Process a poll begin")
+                            self.__process_poll_begin(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.POLL_BEGIN:
-                        logging.info("Process a poll begin")
-                        self.__process_poll_begin(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.POLL_END:
+                            logging.info("Process a poll end")
+                            self.__process_poll_end(event=event)
 
-                    case TwitchSubscriptionType.POLL_END:
-                        logging.info("Process a poll end")
-                        self.__process_poll_end(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.PREDICTION_BEGIN:
+                            logging.info("Process a prediction begin")
+                            self.__process_prediction_begin(event=event)
 
-                    case TwitchSubscriptionType.PREDICTION_BEGIN:
-                        logging.info("Process a prediction begin")
-                        self.__process_prediction_begin(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.PREDICTION_LOCK:
+                            logging.info("Process a prediction lock")
+                            self.__process_prediction_lock(event=event)
 
-                    case TwitchSubscriptionType.PREDICTION_LOCK:
-                        logging.info("Process a prediction lock")
-                        self.__process_prediction_lock(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.PREDICTION_END:
+                            logging.info("Process a prediction end")
+                            self.__process_prediction_end(event=event)
 
-                    case TwitchSubscriptionType.PREDICTION_END:
-                        logging.info("Process a prediction end")
-                        self.__process_prediction_end(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.VIP_ADD:
+                            logging.info("Process a VIP added")
+                            self.__process_vip_add(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.VIP_ADD:
-                        logging.info("Process a VIP added")
-                        self.__process_vip_add(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.STREAM_ONLINE:
+                            logging.info("Process a stream online notification")
+                            self.__process_stream_online(event=event, date=msg_timestamp)
 
-                    case TwitchSubscriptionType.STREAM_ONLINE:
-                        logging.info("Process a stream online notification")
-                        self.__process_stream_online(event=event, date=msg_timestamp)
+                        case TwitchSubscriptionType.STREAM_OFFLINE:
+                            logging.info("Process a stream offline notification")
+                            self.__process_stream_offline(date=msg_timestamp)
 
-                    case TwitchSubscriptionType.STREAM_OFFLINE:
-                        logging.info("Process a stream offline notification")
-                        self.__process_stream_offline(date=msg_timestamp)
+                        case TwitchSubscriptionType.BITS:
+                            logging.info("Process bits received")
+                            self.__process_bits(event=event, date=msg_timestamp, id=id)
 
-                    case TwitchSubscriptionType.BITS:
-                        logging.info("Process bits received")
-                        self.__process_bits(event=event, date=msg_timestamp)
+                except Exception as e:
+                    logging.error(str(e.__class__.__name__) + ": " + str(e))
 
     def on_error(self, ws, message):
         logging.error(message)
@@ -364,7 +363,7 @@ class EventSub(WebSocketApp):
                                                 bits_votes=c["bits_votes"], votes=c["votes"], poll_id=id,
                                                 channel_points_votes=c["channel_points_votes"])
 
-    def __process_prediction_begin(self, event: dict, date: str):
+    def __process_prediction_begin(self, event: dict):
         pred_title = event["title"]
         choices = event["outcomes"]
         start = event["started_at"]
@@ -372,12 +371,12 @@ class EventSub(WebSocketApp):
         self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "choices": choices,
                                                                           "start_date": start, "lock_date": lock})
 
-    def __process_prediction_lock(self, event: dict, date: str):
+    def __process_prediction_lock(self, event: dict):
         pred_title = event["title"]
         result = event["outcomes"]
         self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "result": result})
 
-    def __process_prediction_end(self, event: dict, date: str):
+    def __process_prediction_end(self, event: dict):
         pred_title = event["title"]
         result = event["outcomes"]
         winning = None
@@ -390,18 +389,57 @@ class EventSub(WebSocketApp):
         self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "result": result,
                                                                           "winning_pred": winning})
 
-    def __process_ban(self, event: dict, date: str):
+        if self.__store_in_db:
+            id = event["id"]
+            winning_id = event["winning_outcome_id"]
+            start_date = event["started_at"][-4]
+            end_date = event["ended_at"][-4]
+            status = event["status"]
+            self.__dbmanager.execute_script(DataBaseTemplate.PREDICTION, id=id, title=pred_title,
+                                            winning_outcome=winning, winning_outcome_id=winning_id,
+                                            start_date=start_date, end_date=end_date, status=status)
+
+            for r in result:
+                self.__dbmanager.execute_script(DataBaseTemplate.PREDICTION_CHOICES, id=r["id"], title=r["title"],
+                                                nb_users=r["users"], channel_points=r["channel_points"],
+                                                prediction_id=id)
+
+
+    def __process_ban(self, event: dict, id: str):
         user = event["user_name"]
         reason = event["reason"]
         ban_date = event["banned_at"]
         end_ban = event["ends_at"]
         permanent = event["is_permanent"]
-        self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "reason": reason, "start_ban": ban_date,
+        moderator_name = event["moderator_user_name"]
+        self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "moderator_name": moderator_name,
+                                                             "reason": reason, "start_ban": ban_date,
                                                              "end_ban": end_ban, "permanent": permanent})
+
+        if self.__store_in_db:
+            user_id = event["user_id"]
+            moderator_id = event["moderator_user_id"]
+            self.__dbmanager.execute_script(DataBaseTemplate.BAN, id=id, user=user, user_id=user_id,
+                                            moderator=moderator_id, moderator_id=moderator_id, reason=reason,
+                                            start_ban=ban_date, end_ban=end_ban, is_permanent=permanent)
+
+
 
     def __process_vip_add(self, event: dict, date: str):
         user = event["user_name"]
         self.__trigger_map.trigger(TriggerSignal.VIP_ADD, param={"user_name": user})
+
+        if self.__store_in_db:
+            user_id = event["user_id"]
+            self.__dbmanager.execute_script(DataBaseTemplate.ADD_VIP, user_id=user_id, user=user, date=date)
+
+    def __process_vip_remove(self, event:dict):
+        user = event["user_name"]
+        self.__trigger_map.trigger(TriggerSignal.VIP_REMOVE, param={"user_name": user})
+
+        if self.__store_in_db:
+            user_id = event["user_id"]
+            self.__dbmanager.execute_script(DataBaseTemplate.REMOVE_VIP, user_id=user_id)
 
     def __process_stream_online(self, event: dict, date: str):
         type = event["type"]
@@ -411,7 +449,7 @@ class EventSub(WebSocketApp):
     def __process_stream_offline(self, date: str):
         self.__trigger_map.trigger(TriggerSignal.STREAM_OFFLINE)
 
-    def __process_bits(self, event: dict, date: str):
+    def __process_bits(self, event: dict, id:str, date: str):
         user = event["user_name"]
         bits_number = event["bits"]
         type = event["type"]
@@ -419,3 +457,10 @@ class EventSub(WebSocketApp):
         message = event["message"]["text"]
         self.__trigger_map.trigger(TriggerSignal.BITS, param={"user_name": user, "bits": bits_number, "type": type,
                                                               "power_up": power_up, "message": message})
+
+        if self.__store_in_db:
+            user_id = event["user_id"]
+            power_up = "NULL" if power_up else "'" + power_up + "'"
+            message = "NULL" if message else "'" + message + "'"
+            self.__dbmanager.execute_script(DataBaseTemplate.BITS, id=id, user_id=user_id, user=user, type=type,
+                                            nb_bits=bits_number, power_up=power_up, message=message, date=date)
