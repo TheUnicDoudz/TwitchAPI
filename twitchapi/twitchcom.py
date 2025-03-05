@@ -25,8 +25,10 @@ class TwitchEndpoint:
 class TwitchRightType:
     USER_READ_CHAT = "user:read:chat"
     USER_BOT = "user:bot"
+    USER_WRITE_CHAT = "user:write:chat"
     CHANNEL_BOT = "channel:bot"
     MODERATOR_READ_FOLLOWERS = "moderator:read:followers"
+    MODERATOR_READ_CHATTERS = "moderator:read:chatters"
     CHANNEL_MODERATE = "channel:moderate"
     CHANNEL_READ_SUBSCRIPTIONS = "channel:read:subscriptions"
     CHANNEL_READ_REDEMPTIONS = "channel:read:redemptions"

@@ -3,12 +3,12 @@ import logging
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
 from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
 from twitchapi.eventsub import EventSub
-from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel
+from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, TwitchRightType
 from twitchapi.utils import ThreadWithExc, TriggerMap
 
 class ChatBot:
-    DEFAULT_RIGHT = ["moderator:read:followers", "user:write:chat", "moderator:read:chatters",
-                     "moderator:read:chatters"]
+    DEFAULT_RIGHT = [TwitchRightType.MODERATOR_READ_FOLLOWERS, TwitchRightType.USER_WRITE_CHAT,
+                     TwitchRightType.MODERATOR_READ_CHATTERS,]
 
     def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH, timeout=DEFAULT_TIMEOUT, right: list[str] = None,
