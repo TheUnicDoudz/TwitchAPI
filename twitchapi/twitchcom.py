@@ -7,8 +7,9 @@ class TwitchEndpoint:
     CHANNEL_INFO = "channels?broadcaster_id=<channel_id>"
     SEND_MESSAGE = "chat/messages"
     EVENTSUB_SUBSCRIPTION = "eventsub/subscriptions"
-    GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id=<user_id>"
-    GET_FOLLOWERS = "channels/followers?broadcaster_id=<user_id>"
+    GET_CUSTOM_REWARD = "channel_points/custom_rewards?broadcaster_id=<channel_id>"
+    GET_FOLLOWERS = "channels/followers?broadcaster_id=<channel_id>"
+    GET_SUBSCRIBERS = "subscriptions?broadcaster_id=<channel_id>"
     GET_CHATTERS = "chat/chatters?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
     BAN = "moderation/bans?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
 

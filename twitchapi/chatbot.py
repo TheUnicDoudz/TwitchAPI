@@ -9,7 +9,7 @@ from twitchapi.utils import ThreadWithExc, TriggerMap
 
 class ChatBot:
     DEFAULT_RIGHT = [TwitchRightType.MODERATOR_READ_FOLLOWERS, TwitchRightType.USER_WRITE_CHAT,
-                     TwitchRightType.MODERATOR_READ_CHATTERS]
+                     TwitchRightType.MODERATOR_READ_CHATTERS, TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS]
 
     def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH, timeout=DEFAULT_TIMEOUT, right: list[str] = None,
@@ -95,14 +95,32 @@ class ChatBot:
     def stop_event_server(self):
         self.__event_sub.keep_running = False
 
+    def get_subscriber(self):
+        endpoint = TwitchEndpoint.apply_param(TwitchEndpoint.GET_SUBSCRIBERS, channel_id=self._channel_id)
+        return self.__browse_all(self.__auth.get_request, endpoint)
+
     def get_follower(self):
-        return self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_FOLLOWERS,
-                                                                  user_id=self._channel_id))["data"]
+        endpoint = TwitchEndpoint.apply_param(TwitchEndpoint.GET_FOLLOWERS, channel_id=self._channel_id)
+        return self.__browse_all(self.__auth.get_request, endpoint)
 
     def get_connected_users(self):
-        return self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_CHATTERS,
-                                                                  channel_id=self._channel_id,
-                                                                  moderator_id=self._bot_id))["data"]
+        endpoint = TwitchEndpoint.apply_param(TwitchEndpoint.GET_CHATTERS, channel_id=self._channel_id,
+                                              moderator_id=self._bot_id)
+        return self.__browse_all(self.__auth.get_request, endpoint)
+
+    def __browse_all(self, callback, endpoint:str):
+        if not "?" in endpoint:
+            endpoint += "?first=100"
+        else:
+            endpoint += "&first=100"
+        out = callback(endpoint)
+        data = out["data"]
+        while out["pagination"]:
+            cursor = out["pagination"]["cursor"]
+            out = callback(endpoint + f"&after={cursor}")
+            data += out["data"]
+        return data
+
 
     def ban_user(self, user_id: str, reason: str, duration: int = None):
         data = {"user_id": user_id, "reason": reason}

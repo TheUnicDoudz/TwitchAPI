@@ -180,7 +180,7 @@ class EventSub(WebSocketApp):
                         "to be the same as the broadcaster account!")
 
                 custom_reward = self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_CUSTOM_REWARD,
-                                                                                   user_id=self._channel_id))["data"]
+                                                                                   channel_id=self._channel_id))["data"]
 
                 for reward_subscription in self.__channel_point_subscription:
                     logging.info(f"Subscription for {reward_subscription}")
