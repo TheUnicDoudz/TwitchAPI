@@ -195,7 +195,7 @@ class DataBaseManager:
                      moderator_id VARCHAR(100) NOT NULL,
                      reason TEXT NOT NULL,
                      start_ban DATE NOT NULL,
-                     end_ban DATE NOT NULL,
+                     end_ban DATE,
                      is_permanent BOOLEAN NOT NULL
                  )"""
 
@@ -234,6 +234,18 @@ class DataBaseManager:
         cursor = db.cursor()
 
         cursor.execute(self.__InitDataBaseTemplate.MESSAGE)
+        cursor.execute(self.__InitDataBaseTemplate.CHANNEL_POINT_ACTION)
+        cursor.execute(self.__InitDataBaseTemplate.FOLLOW)
+        cursor.execute(self.__InitDataBaseTemplate.SUBSCRIBE)
+        cursor.execute(self.__InitDataBaseTemplate.SUBGIFT)
+        cursor.execute(self.__InitDataBaseTemplate.RAID)
+        cursor.execute(self.__InitDataBaseTemplate.POLL)
+        cursor.execute(self.__InitDataBaseTemplate.POLL_CHOICES)
+        cursor.execute(self.__InitDataBaseTemplate.PREDICTION)
+        cursor.execute(self.__InitDataBaseTemplate.PREDICTION_CHOICES)
+        cursor.execute(self.__InitDataBaseTemplate.BAN)
+        cursor.execute(self.__InitDataBaseTemplate.VIP)
+        cursor.execute(self.__InitDataBaseTemplate.BITS)
         db.commit()
         db.close()
 

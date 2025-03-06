@@ -1,5 +1,4 @@
 import logging
-from sys import exception
 from typing import Any
 
 from websocket import WebSocketApp
@@ -7,11 +6,10 @@ from websocket import WebSocketApp
 from twitchapi.auth import AuthServer
 from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, \
     TwitchSubscriptionType
-from twitchapi.utils import ThreadWithExc, TriggerMap
-from twitchapi.exception import KillThreadException, TwitchEventSubError, TwitchAuthorizationFailed
+from twitchapi.utils import TriggerMap
+from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
 import json
 import os
-from threading import Lock
 from twitchapi.db import DataBaseManager, DataBaseTemplate
 
 SOURCE_ROOT = os.path.dirname(__file__)
@@ -129,6 +127,10 @@ class EventSub(WebSocketApp):
                         case TwitchSubscriptionType.VIP_ADD:
                             logging.info("Process a VIP added")
                             self.__process_vip_add(event=event, date=msg_timestamp)
+
+                        case TwitchSubscriptionType.VIP_REMOVE:
+                            logging.info("Process a VIP removed")
+                            self.__process_vip_remove(event=event)
 
                         case TwitchSubscriptionType.STREAM_ONLINE:
                             logging.info("Process a stream online notification")
@@ -374,7 +376,7 @@ class EventSub(WebSocketApp):
     def __process_prediction_lock(self, event: dict):
         pred_title = event["title"]
         result = event["outcomes"]
-        self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "result": result})
+        self.__trigger_map.trigger(TriggerSignal.PREDICTION_LOCK, param={"title": pred_title, "result": result})
 
     def __process_prediction_end(self, event: dict):
         pred_title = event["title"]

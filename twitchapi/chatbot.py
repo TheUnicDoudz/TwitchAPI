@@ -150,7 +150,7 @@ class ChatBot:
     def prediction_end(self, title: str, result: dict, winning_pred: str):
         pass
 
-    def new_ban(self, user_name: str, moderator_name:str, reason: str, start_ban: str, end_date: str, permanent: bool):
+    def new_ban(self, user_name: str, moderator_name:str, reason: str, start_ban: str, end_ban: str, permanent: bool):
         pass
 
     def new_vip(self, user_name: str):
