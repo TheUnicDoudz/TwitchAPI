@@ -21,6 +21,9 @@ class DataBaseTemplate:
                                      '<status>', DATETIME('<date>', 'subsec'), DATETIME('<redeem_date>', 'subsec'), 
                                      <cost>)"""
 
+    CHANNEL_CHEER = """INSERT INTO cheer
+                       VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), <nb_bits>, <anonymous>)"""
+
     FOLLOW = """INSERT INTO follow 
                 VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), 
                        DATETIME('<follow_date>', 'subsec'))"""
@@ -105,6 +108,15 @@ class DataBaseManager:
                                       redeem_date DATE NOT NULL,
                                       cost INT NOT NULL
                                   )"""
+
+        CHANNEL_CHEER = """CREATE TABLE cheer (
+                               id VARCHAR(36) PRIMARY KEY NOT NULL,
+                               user VARCHAR(100),
+                               user_id VARCHAR(100),
+                               date DATE NOT NULL,
+                               nb_bits INT NOT NULL,
+                               anonymous BOOLEAN NOT NULL
+                           )"""
 
         FOLLOW = """CREATE TABLE follow (
                         id VARCHAR(36) PRIMARY KEY NOT NULL,

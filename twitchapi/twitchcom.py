@@ -57,6 +57,7 @@ class TwitchSubscriptionType:
     RAID = "channel.raid"
 
     CHANNEL_POINT_ACTION = "channel.channel_points_custom_reward_redemption.add"
+    CHANNEL_CHEER = "channel.cheer"
 
     POLL_BEGIN = "channel.poll.begin"
     POLL_END = "channel.poll.end"
@@ -160,6 +161,15 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.CHANNEL_POINT_ACTION,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id, "reward_id": ""}
+            }
+        }
+
+        self.CHANNEL_CHEER = {
+            "right": [TwitchRightType.BITS_READ],
+            "payload": {
+                "type": TwitchSubscriptionType.CHANNEL_CHEER,
+                "version": "1",
+                "condition": {"broadcaster_user_id": broadcaster_user_id}
             }
         }
 
@@ -283,6 +293,7 @@ class TriggerSignal:
     RAID_SOMEONE = "raid_someone"
 
     CHANNEL_POINT_ACTION = "channel_point_action"
+    CHANNEL_CHEER = "channel_cheer"
 
     POLL_BEGIN = "poll_begin"
     POLL_END = "poll_end"
