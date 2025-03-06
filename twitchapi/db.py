@@ -23,7 +23,7 @@ class DataBaseTemplate:
 
     FOLLOW = """INSERT INTO follow 
                 VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), 
-                       <DATETIME('<follow_date>', 'subsec'))"""
+                       DATETIME('<follow_date>', 'subsec'))"""
 
     SUBSCRIBE = """INSERT INTO subscribe (id, user, user_id, date, tier, is_gift, duration)
                    VALUES('<id>', '<user>', '<user_id>', DATETIME('<date>', 'subsec'), '<tier>', <is_gift>, 1)
@@ -53,7 +53,7 @@ class DataBaseTemplate:
                     VALUES('<id>', '<title>', '<winning_outcome>', '<winning_outcome_id>', 
                            DATETIME('<start_date>', 'subsec'), DATETIME('<end_date>', 'subsec'), '<status>')"""
 
-    PREDICTION_CHOICES = """INSERT INTO poll_choices
+    PREDICTION_CHOICES = """INSERT INTO prediction_choices
                             VALUES('<id>', '<title>', <nb_users>, <channel_points>, '<prediction_id>')"""
 
     BAN = """INSERT INTO ban
@@ -75,7 +75,7 @@ class DataBaseTemplate:
             marker = f"<{param}>"
             if marker not in script:
                 raise AttributeError(f"{param} is not supported by the endpoint {script}")
-            script = script.replace(marker, kwargs[param])
+            script = script.replace(marker, str(kwargs[param]))
         return script
 
 
@@ -166,7 +166,8 @@ class DataBaseManager:
                               bits_votes INT,
                               channel_points_votes INT,
                               votes INT NOT NULL,
-                              poll_id VARCHAR(36) FOREIGN KEY REFERENCES poll(id)
+                              poll_id VARCHAR(36),
+                              FOREIGN KEY(poll_id) REFERENCES poll(id)
                           )"""
 
         PREDICTION = """CREATE TABLE prediction (
@@ -184,7 +185,8 @@ class DataBaseManager:
                                     title TEXT NOT NULL,
                                     nb_users INT NOT NULL,
                                     channel_points INT NOT NULL,
-                                    prediction_id VARCHAR(36) FOREIGN KEY REFERENCES prediction(id)
+                                    prediction_id VARCHAR(36),
+                                    FOREIGN KEY(prediction_id) REFERENCES prediction(id)
                                 )"""
 
         BAN = """CREATE TABLE ban (
@@ -195,14 +197,14 @@ class DataBaseManager:
                      moderator_id VARCHAR(100) NOT NULL,
                      reason TEXT NOT NULL,
                      start_ban DATE NOT NULL,
-                     end_ban DATE NOT NULL,
+                     end_ban DATE,
                      is_permanent BOOLEAN NOT NULL
                  )"""
 
         VIP = """CREATE TABLE vip (
                      user_id VARCHAR(100) PRIMARY KEY NOT NULL,
                      user VARCHAR(100) NOT NULL,
-                     date DATE NOT NULL,
+                     date DATE NOT NULL
                  )"""
 
         BITS = """CREATE TABLE bits(
@@ -234,6 +236,18 @@ class DataBaseManager:
         cursor = db.cursor()
 
         cursor.execute(self.__InitDataBaseTemplate.MESSAGE)
+        cursor.execute(self.__InitDataBaseTemplate.CHANNEL_POINT_ACTION)
+        cursor.execute(self.__InitDataBaseTemplate.FOLLOW)
+        cursor.execute(self.__InitDataBaseTemplate.SUBSCRIBE)
+        cursor.execute(self.__InitDataBaseTemplate.SUBGIFT)
+        cursor.execute(self.__InitDataBaseTemplate.RAID)
+        cursor.execute(self.__InitDataBaseTemplate.POLL)
+        cursor.execute(self.__InitDataBaseTemplate.POLL_CHOICES)
+        cursor.execute(self.__InitDataBaseTemplate.PREDICTION)
+        cursor.execute(self.__InitDataBaseTemplate.PREDICTION_CHOICES)
+        cursor.execute(self.__InitDataBaseTemplate.BAN)
+        cursor.execute(self.__InitDataBaseTemplate.VIP)
+        cursor.execute(self.__InitDataBaseTemplate.BITS)
         db.commit()
         db.close()
 

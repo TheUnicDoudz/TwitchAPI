@@ -86,4 +86,7 @@ class TriggerMap:
     def trigger(self, trigger_value: str, param: dict=None):
         if trigger_value not in self.__callbacks:
             raise KeyError(f"There's no callback react to {trigger_value}!!")
-        self.__callbacks[trigger_value](**param)
+        if param:
+            self.__callbacks[trigger_value](**param)
+        else:
+            self.__callbacks[trigger_value]()

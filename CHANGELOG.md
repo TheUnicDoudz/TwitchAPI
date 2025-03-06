@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Add parameter to use database from ChatBot class
+- Fix ban, poll end, prediction lock, prediction end trigger callback
+- Fix start and end date for poll and prediction for database ingestion
+- Fix call trigger callback with no parameter
+- Fix insert sql request
+- Call all table creation if no database exist
+
 ## [0.1.0] (05/03/2024)
 
 ### Added
@@ -19,4 +29,3 @@
 - Add user action to interact with the chat
 - Stream information are stored in a SQLite3 data base
 - Add class to standardize twitch right
-

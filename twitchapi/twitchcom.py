@@ -1,6 +1,7 @@
 class TwitchEndpoint:
     TWITCH_ENDPOINT = "https://api.twitch.tv/helix/"
-    TWITCH_WEBSOCKET_URL = "wss://eventsub.wss.twitch.tv/ws"
+    # TWITCH_WEBSOCKET_URL = "wss://eventsub.wss.twitch.tv/ws"
+    TWITCH_WEBSOCKET_URL = "ws://localhost:8080/ws"
     TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/token"
 
     USER_ID = "users?login=<user_id>"
