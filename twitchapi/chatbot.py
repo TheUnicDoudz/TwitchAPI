@@ -44,6 +44,7 @@ class ChatBot:
         self.__trigger_map.add_trigger(self.raid_on_caster, TriggerSignal.RAID)
         self.__trigger_map.add_trigger(self.raid_someone, TriggerSignal.RAID_SOMEONE)
         self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT_ACTION)
+        self.__trigger_map.add_trigger(self.channel_cheer, TriggerSignal.CHANNEL_CHEER)
         self.__trigger_map.add_trigger(self.new_poll, TriggerSignal.POLL_BEGIN)
         self.__trigger_map.add_trigger(self.poll_end, TriggerSignal.POLL_END)
         self.__trigger_map.add_trigger(self.new_prediction, TriggerSignal.PREDICTION_BEGIN)
@@ -118,7 +119,7 @@ class ChatBot:
         pass
 
     def channel_cheer(self, user_name: str, message: str, nb_bits: int, is_anonymous: bool):
-        pass
+            pass
 
     def new_follow(self, user_name: str):
         pass
