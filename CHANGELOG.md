@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added 
+- Add cheer event notification handler
+
 ### Fixed
 - Add parameter to use database from ChatBot class
 - Fix ban, poll end, prediction lock, prediction end trigger callback
