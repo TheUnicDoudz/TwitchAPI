@@ -104,6 +104,10 @@ class EventSub(WebSocketApp):
                             logging.info("Process a channel action point")
                             self.__process_channel_point_action(event=event, date=msg_timestamp)
 
+                        case TwitchSubscriptionType.CHANNEL_CHEER:
+                            logging.info("Process a cheer message")
+                            self.__process_channel_cheer(event=event, date=msg_timestamp, id=id)
+
                         case TwitchSubscriptionType.POLL_BEGIN:
                             logging.info("Process a poll begin")
                             self.__process_poll_begin(event=event, date=msg_timestamp)
@@ -247,6 +251,20 @@ class EventSub(WebSocketApp):
                                             reward_name=reward_name, reward_id=reward_id, status=status, date=date,
                                             redeem_date=redeem_date, cost=reward_cost, reward_prompt=reward_prompt)
 
+    def __process_channel_cheer(self, event: dict, id: str, date: str):
+        is_anonymous = event['is_anonymous']
+        user_name = event["user_name"] if not is_anonymous else None
+        message = event["message"]
+        nb_bits = event["bits"]
+        self.__trigger_map.trigger(TriggerSignal.CHANNEL_CHEER, param={"user_name": user_name, "message": message,
+                                                                       "nb_bits": nb_bits,"is_anonymous": is_anonymous
+                                                                       })
+
+        if self.__store_in_db:
+            user_id = event["user_id"] if not is_anonymous else None
+            self.__dbmanager.execute_script(DataBaseTemplate.CHANNEL_CHEER, id=id, user=user_name, user_id=user_id,
+                                            date=date, nb_bits=nb_bits, anonymous=str(is_anonymous).upper())
+
     def __process_follow(self, event: dict, id: str, date: str):
         user = event["user_name"]
         self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user})
@@ -389,7 +407,7 @@ class EventSub(WebSocketApp):
         if not winning:
             raise TwitchEventSubError(f"There's no winning prediction for {pred_title}")
         self.__trigger_map.trigger(TriggerSignal.PREDICTION_END, param={"title": pred_title, "result": result,
-                                                                          "winning_pred": winning})
+                                                                        "winning_pred": winning})
 
         if self.__store_in_db:
             id = event["id"]
@@ -405,7 +423,6 @@ class EventSub(WebSocketApp):
                 self.__dbmanager.execute_script(DataBaseTemplate.PREDICTION_CHOICES, id=r["id"], title=r["title"],
                                                 nb_users=r["users"], channel_points=r["channel_points"],
                                                 prediction_id=id)
-
 
     def __process_ban(self, event: dict, id: str):
         user = event["user_name"]
@@ -425,8 +442,6 @@ class EventSub(WebSocketApp):
                                             moderator=moderator_id, moderator_id=moderator_id, reason=reason,
                                             start_ban=ban_date, end_ban=end_ban, is_permanent=permanent)
 
-
-
     def __process_vip_add(self, event: dict, date: str):
         user = event["user_name"]
         self.__trigger_map.trigger(TriggerSignal.VIP_ADD, param={"user_name": user})
@@ -435,7 +450,7 @@ class EventSub(WebSocketApp):
             user_id = event["user_id"]
             self.__dbmanager.execute_script(DataBaseTemplate.ADD_VIP, user_id=user_id, user=user, date=date)
 
-    def __process_vip_remove(self, event:dict):
+    def __process_vip_remove(self, event: dict):
         user = event["user_name"]
         self.__trigger_map.trigger(TriggerSignal.VIP_REMOVE, param={"user_name": user})
 
@@ -451,7 +466,7 @@ class EventSub(WebSocketApp):
     def __process_stream_offline(self, date: str):
         self.__trigger_map.trigger(TriggerSignal.STREAM_OFFLINE)
 
-    def __process_bits(self, event: dict, id:str, date: str):
+    def __process_bits(self, event: dict, id: str, date: str):
         user = event["user_name"]
         bits_number = event["bits"]
         type = event["type"]

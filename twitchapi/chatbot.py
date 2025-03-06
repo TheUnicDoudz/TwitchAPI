@@ -6,13 +6,14 @@ from twitchapi.eventsub import EventSub
 from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, TwitchRightType
 from twitchapi.utils import ThreadWithExc, TriggerMap
 
+
 class ChatBot:
     DEFAULT_RIGHT = [TwitchRightType.MODERATOR_READ_FOLLOWERS, TwitchRightType.USER_WRITE_CHAT,
-                     TwitchRightType.MODERATOR_READ_CHATTERS,]
+                     TwitchRightType.MODERATOR_READ_CHATTERS]
 
     def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH, timeout=DEFAULT_TIMEOUT, right: list[str] = None,
-                 channel_point_subscription: list[str] = None, store_in_db:bool=False):
+                 channel_point_subscription: list[str] = None, store_in_db: bool = False):
         self._client_id = client_id
         self.__client_secret = client_secret
 
@@ -43,6 +44,7 @@ class ChatBot:
         self.__trigger_map.add_trigger(self.raid_on_caster, TriggerSignal.RAID)
         self.__trigger_map.add_trigger(self.raid_someone, TriggerSignal.RAID_SOMEONE)
         self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT_ACTION)
+        self.__trigger_map.add_trigger(self.channel_cheer, TriggerSignal.CHANNEL_CHEER)
         self.__trigger_map.add_trigger(self.new_poll, TriggerSignal.POLL_BEGIN)
         self.__trigger_map.add_trigger(self.poll_end, TriggerSignal.POLL_END)
         self.__trigger_map.add_trigger(self.new_prediction, TriggerSignal.PREDICTION_BEGIN)
@@ -116,6 +118,9 @@ class ChatBot:
     def channel_reward(self, user_name: str, reward_name: str):
         pass
 
+    def channel_cheer(self, user_name: str, message: str, nb_bits: int, is_anonymous: bool):
+            pass
+
     def new_follow(self, user_name: str):
         pass
 
@@ -150,7 +155,7 @@ class ChatBot:
     def prediction_end(self, title: str, result: dict, winning_pred: str):
         pass
 
-    def new_ban(self, user_name: str, moderator_name:str, reason: str, start_ban: str, end_ban: str, permanent: bool):
+    def new_ban(self, user_name: str, moderator_name: str, reason: str, start_ban: str, end_ban: str, permanent: bool):
         pass
 
     def new_vip(self, user_name: str):
