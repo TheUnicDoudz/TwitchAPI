@@ -12,7 +12,7 @@ class ChatBot:
 
     def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH, timeout=DEFAULT_TIMEOUT, right: list[str] = None,
-                 channel_point_subscription: list[str] = None):
+                 channel_point_subscription: list[str] = None, store_in_db:bool=False):
         self._client_id = client_id
         self.__client_secret = client_secret
 
@@ -57,7 +57,7 @@ class ChatBot:
         self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
                                     subscription_types=self.__subscription, auth_server=self.__auth,
                                     trigger_map=self.__trigger_map,
-                                    channel_point_subscription=channel_point_subscription)
+                                    channel_point_subscription=channel_point_subscription, store_in_db=store_in_db)
 
         self.__thread = ThreadWithExc(target=self.__run_event_server)
         self.__thread.start()
