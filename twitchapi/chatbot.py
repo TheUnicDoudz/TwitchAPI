@@ -9,7 +9,7 @@ from twitchapi.utils import ThreadWithExc, TriggerMap
 
 class ChatBot:
     DEFAULT_RIGHT = [TwitchRightType.MODERATOR_READ_FOLLOWERS, TwitchRightType.USER_WRITE_CHAT,
-                     TwitchRightType.MODERATOR_READ_CHATTERS, ]
+                     TwitchRightType.MODERATOR_READ_CHATTERS]
 
     def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
                  redirect_uri_auth: str = REDIRECT_URI_AUTH, timeout=DEFAULT_TIMEOUT, right: list[str] = None,
