@@ -209,8 +209,8 @@ class EventSub(WebSocketApp):
     def __process_message(self, event: dict[str, Any], date: str):
 
         id = event['message_id']
-        user_name = event["chatter_user_login"]
-        user_id = event["user_id"]
+        user_name = event["chatter_user_name"]
+        user_id = event["chatter_user_id"]
         message = event["message"]["text"]
         cheer = True if event["cheer"] else False
         emote = True if len(event["message"]["fragments"]) > 1 else False
