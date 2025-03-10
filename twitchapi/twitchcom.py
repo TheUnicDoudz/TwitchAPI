@@ -84,7 +84,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.MESSAGE,
                 "condition": {"broadcaster_user_id": broadcaster_user_id, "user_id": user_id},
                 "version": "1"
-            }
+            },
+            "streamer_only": False
         }
 
         self.FOLLOW = {
@@ -96,7 +97,8 @@ class TwitchSubscriptionModel:
                     "broadcaster_user_id": broadcaster_user_id,
                     "moderator_user_id": user_id
                 }
-            }
+            },
+            "streamer_only": False
         }
 
         self.BAN = {
@@ -107,7 +109,8 @@ class TwitchSubscriptionModel:
                 "condition": {
                     "broadcaster_user_id": broadcaster_user_id,
                 }
-            }
+            },
+            "streamer_only": True
         }
 
         self.SUBSCRIBE = {
@@ -116,7 +119,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.SUBSCRIBE,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.SUBGIFT = {
@@ -125,7 +129,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.SUBGIFT,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.RESUB_MESSAGE = {
@@ -134,7 +139,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.RESUB_MESSAGE,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.RAID = {
@@ -143,7 +149,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.RAID,
                 "version": "1",
                 "condition": {"to_broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": False
         }
 
         self.RAID_SOMEONE = {
@@ -152,7 +159,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.RAID,
                 "version": "1",
                 "condition": {"from_broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": False
         }
 
         self.CHANNEL_POINT_ACTION = {
@@ -161,7 +169,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.CHANNEL_POINT_ACTION,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id, "reward_id": ""}
-            }
+            },
+            "streamer_only": True
         }
 
         self.CHANNEL_CHEER = {
@@ -170,7 +179,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.CHANNEL_CHEER,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.POLL_BEGIN = {
@@ -179,7 +189,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.POLL_BEGIN,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.POLL_END = {
@@ -188,7 +199,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.POLL_END,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.PREDICTION_BEGIN = {
@@ -197,7 +209,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.PREDICTION_BEGIN,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.PREDICTION_LOCK = {
@@ -206,7 +219,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.PREDICTION_LOCK,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.PREDICTION_END = {
@@ -215,7 +229,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.PREDICTION_END,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.VIP_ADD = {
@@ -224,7 +239,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.VIP_ADD,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.VIP_REMOVE = {
@@ -233,7 +249,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.VIP_REMOVE,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
         self.STREAM_ONLINE = {
@@ -242,7 +259,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.STREAM_ONLINE,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": False
         }
 
         self.STREAM_OFFLINE = {
@@ -251,7 +269,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.STREAM_OFFLINE,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": False
         }
 
         self.BITS = {
@@ -260,7 +279,8 @@ class TwitchSubscriptionModel:
                 "type": TwitchSubscriptionType.BITS,
                 "version": "beta",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
-            }
+            },
+            "streamer_only": True
         }
 
     def which_right(self, subscription_list: list[str]) -> list[str]:

@@ -165,7 +165,15 @@ class EventSub(WebSocketApp):
     def __subscription(self):
         for subscription in self._subscription_types:
             logging.info(f"Subscription for {subscription}")
-            s_data = self.__tsm.get_subscribe_data(subscription)["payload"]
+            s_data = self.__tsm.get_subscribe_data(subscription)
+
+            if s_data["streamer_only"] and self._bot_id != self._channel_id:
+                raise TwitchAuthorizationFailed(
+                    f"To subscribe to {subscription}, the account used for authentication has "
+                    "to be the same as the broadcaster account!")
+
+            s_data = s_data["payload"]
+
             data = {
                 "transport": {
                     "method": "websocket",
@@ -174,11 +182,6 @@ class EventSub(WebSocketApp):
             }
 
             if subscription == TwitchSubscriptionType.CHANNEL_POINT_ACTION and self.__channel_point_subscription:
-                if self._channel_id != self._bot_id:
-                    raise TwitchAuthorizationFailed(
-                        "To subscribe to specific reward, the account used for authentication has "
-                        "to be the same as the broadcaster account!")
-
                 custom_reward = self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_CUSTOM_REWARD,
                                                                                    channel_id=self._channel_id))["data"]
 
