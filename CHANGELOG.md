@@ -4,6 +4,8 @@
 
 ### Added 
 - Add cheer event notification handler
+- Getter for subscriber, follower and chatters
+- Rules to check if a event can be sub by the account of the broadcaster or an other account
 
 ### Fixed
 - Add parameter to use database from ChatBot class
@@ -12,6 +14,10 @@
 - Fix call trigger callback with no parameter
 - Fix insert sql request
 - Call all table creation if no database exist
+- Fix parameter names of event data in the process message function
+
+### Modified
+- Use decorator to check the token's validity
 
 ## [0.1.0] (05/03/2024)
 
