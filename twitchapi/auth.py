@@ -1,5 +1,6 @@
 import time
 import webbrowser
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http import HTTPStatus
@@ -223,34 +224,37 @@ class AuthServer():
             "Content-Type": "application/json"
         }
 
-    def get_request(self, endpoint: str) -> dict:
-        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT + endpoint
-        r = self.__check_request(requests.get, url_endpoint)
-        return r.json()
+    @staticmethod
+    def __check_request(request_function: Callable) -> Callable:
 
-    def post_request(self, endpoint: str, data: dict) -> dict:
-        url_endpoint = TwitchEndpoint.TWITCH_ENDPOINT + endpoint
-        r = self.__check_request(requests.post, url_endpoint, data)
-        return r.json()
-
-    def __check_request(self, request_function, url_endpoint: str, data: dict = None) -> Response:
-        params = {"url": url_endpoint, "headers": self.__headers}
-        if data:
-            params["json"] = data
-        response = request_function(**params)
-        if response.status_code >= 300:
-            if response.status_code == 401:
-                self.refresh_token()
-                params["headers"] = self.__headers
-                response = request_function(**params)
-                if response.status_code != 200:
+        def wrapper(self, endpoint: str, data: dict = None) -> dict:
+            endpoint = TwitchEndpoint.TWITCH_ENDPOINT + endpoint
+            params = {"self": self, "endpoint": endpoint}
+            if data:
+                params["data"] = data
+            response = request_function(**params)
+            if response.status_code >= 300:
+                if response.status_code == 401:
+                    self.refresh_token()
+                    response = request_function(**params)
+                    if response.status_code != 200:
+                        logging.error(response.content)
+                        raise TwitchAuthentificationError("Something's wrong with the access token!!")
+                else:
                     logging.error(response.content)
-                    raise TwitchAuthentificationError("Something's wrong with the access token!!")
-            else:
-                logging.error(response.content)
-                raise TwitchEndpointError(
-                    f"The url {url_endpoint} is not correct or you don't have the rights to use it!")
-        return response
+                    raise TwitchEndpointError(
+                        f"The url {endpoint} is not correct or you don't have the rights to use it!")
+            return response.json()
+
+        return wrapper
+
+    @__check_request
+    def get_request(self, endpoint: str) -> Response:
+        return requests.get(url = endpoint, headers=self.__headers)
+
+    @__check_request
+    def post_request(self, endpoint: str, data: dict) -> Response:
+        return requests.post(url=endpoint, json=data, headers=self.__headers)
 
     def authentication(self, client_id: str, client_secret: str, scope: list[str], timeout: int = DEFAULT_TIMEOUT,
                        redirect_uri: str = REDIRECT_URI_AUTH):
