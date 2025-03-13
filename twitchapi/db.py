@@ -1,14 +1,19 @@
-import sqlite3
-import os
 from threading import Lock
+import sqlite3
+
 from typing import Callable
 import logging
-from twitchapi.utils import ThreadWithExc
-from twitchapi.exception import KillThreadException
 import time
+import os
+
+from twitchapi.exception import KillThreadException
+from twitchapi.utils import ThreadWithExc
 
 
 class DataBaseTemplate:
+    """
+    Template for request made on the SQLite database
+    """
     MESSAGE = """INSERT INTO message (id, user, user_id, message, date, cheer, emote) 
                  VALUES('<id>', '<user>', '<user_id>', '<message>', DATETIME('<date>', 'subsec') ,<cheer>, <emote>)"""
 
@@ -83,7 +88,13 @@ class DataBaseTemplate:
 
 
 class DataBaseManager:
+    """
+    Class to manage the SQLite database
+    """
     class __InitDataBaseTemplate:
+        """
+        Template to initialise the SQLite database
+        """
         MESSAGE = """CREATE TABLE message (
                          id VARCHAR(36) PRIMARY KEY NOT NULL,
                          user VARCHAR(100) NOT NULL,
@@ -231,6 +242,10 @@ class DataBaseManager:
                   )"""
 
     def __init__(self, db_path: str, start_thread=False):
+        """
+        :param db_path: path of the database
+        :param start_thread: True if the user wants the database to be enriched automatically every 10 seconds
+        """
         if not os.path.exists(db_path):
             self.__initialize_db(db_path)
 
@@ -244,6 +259,10 @@ class DataBaseManager:
             self.__thread.start()
 
     def __initialize_db(self, db_path: str):
+        """
+        Initialize the SQLite database
+        :param db_path: path of the database
+        """
         db = sqlite3.connect(database=db_path, check_same_thread=False)
         cursor = db.cursor()
 
@@ -263,22 +282,49 @@ class DataBaseManager:
         db.commit()
         db.close()
 
+    def __lock_method(self, callback: Callable):
+        """
+        Decorator to prevent database queries from colliding
+        :param callback: function that will be encapsulated by the semaphore
+        """
+
+        def wrapper(*args, **kwargs):
+            self.__lock.acquire()
+            data = callback(*args, **kwargs)
+            self.__lock.release()
+            return data
+
+        return wrapper
+
+    @__lock_method
     def execute_script(self, script: str, **kwargs):
+        """
+        Execute a SQL script on the database
+        :param script: script template
+        :param kwargs: information to applied on the template script
+        """
         try:
             script = DataBaseTemplate.apply_param(script, **kwargs)
             logging.debug(script)
-            self.__lock_method(self.__cursor.execute, script)
+            self.__cursor.execute(script)
             logging.info('Data ingested')
         except Exception as e:
             logging.error(str(e.__class__.__name__) + ": " + str(e))
             raise e
 
+    @__lock_method
     def commit(self):
+        """
+        Commit the modification on the database
+        """
         logging.info("Try commiting ingested data...")
-        self.__lock_method(self.__db.commit)
+        self.__db.commit()
         logging.info("Data commited!")
 
     def close(self):
+        """
+        Close the connection with the database
+        """
         if self.__start_thread:
             self.__thread.raise_exc(KillThreadException)
             self.__thread.join()
@@ -291,13 +337,12 @@ class DataBaseManager:
         self.__db.close()
         logging.info("Stop data ingestion")
 
-    def __lock_method(self, callback: Callable, *args, **kwargs):
-        self.__lock.acquire()
-        data = callback(*args, **kwargs)
-        self.__lock.release()
-        return data
+
 
     def __auto_commit(self):
+        """
+        Commit automatically modification of the database every 10 seconds
+        """
         try:
             while True:
                 self.commit()
