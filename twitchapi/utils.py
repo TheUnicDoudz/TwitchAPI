@@ -74,16 +74,28 @@ class ThreadWithExc(threading.Thread):
 
 
 class TriggerMap:
-
+    """
+    Link callback to signal define by a specific string
+    """
     def __init__(self):
         self.__callbacks = {}
 
     def add_trigger(self, callback: Callable, trigger_value: str):
+        """
+        Connect a callback to a trigger signal
+        :param callback: function to call
+        :param trigger_value: trigger signal value
+        """
         if trigger_value in self.__callbacks:
             raise KeyError(f"There's already a callback react to {trigger_value}!!")
         self.__callbacks[trigger_value] = callback
 
     def trigger(self, trigger_value: str, param: dict=None):
+        """
+        Trigger a callback linked to a signal
+        :param trigger_value: signal to trigger a callback
+        :param param: parameter of the callback (optional)
+        """
         if trigger_value not in self.__callbacks:
             raise KeyError(f"There's no callback react to {trigger_value}!!")
         if param:

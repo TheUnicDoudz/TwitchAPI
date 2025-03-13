@@ -1,8 +1,13 @@
 class TwitchEndpoint:
+    """
+    Template to construct url for the Twitch API
+    """
     TWITCH_ENDPOINT = "https://api.twitch.tv/helix/"
     TWITCH_WEBSOCKET_URL = "wss://eventsub.wss.twitch.tv/ws"
-    TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/token"
+    TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/"
 
+    CODE = "authorize"
+    TOKEN = "token"
     USER_ID = "users?login=<user_id>"
     CHANNEL_INFO = "channels?broadcaster_id=<channel_id>"
     SEND_MESSAGE = "chat/messages"
@@ -24,6 +29,9 @@ class TwitchEndpoint:
 
 
 class TwitchRightType:
+    """
+    Enable right for the authentication
+    """
     USER_READ_CHAT = "user:read:chat"
     USER_BOT = "user:bot"
     USER_WRITE_CHAT = "user:write:chat"
@@ -44,6 +52,9 @@ class TwitchRightType:
 
 
 class TwitchSubscriptionType:
+    """
+    EventSub type enable for the Twitch API
+    """
     MESSAGE = "channel.chat.message"
 
     FOLLOW = "channel.follow"
@@ -76,7 +87,9 @@ class TwitchSubscriptionType:
 
 
 class TwitchSubscriptionModel:
-
+    """
+    Template of the payload and restriction for the Event Subscription on Twitch
+    """
     def __init__(self, broadcaster_user_id, user_id):
         self.MESSAGE = {
             "right": [TwitchRightType.USER_READ_CHAT, TwitchRightType.USER_BOT, TwitchRightType.CHANNEL_BOT],
@@ -284,6 +297,11 @@ class TwitchSubscriptionModel:
         }
 
     def which_right(self, subscription_list: list[str]) -> list[str]:
+        """
+        Return a list of all right needed to subscribe to the event in the subscription list
+        :param subscription_list: list of event to subscribe
+        :return: list of right
+        """
         rights = []
 
         for subscription in self.__dict__.values():
@@ -293,12 +311,20 @@ class TwitchSubscriptionModel:
         return list(set(rights))
 
     def get_subscribe_data(self, subscription_type: str) -> dict[str, str | dict[str, str]]:
+        """
+        Return the payload of a specific subscription
+        :param subscription_type: name of the event to subscribe
+        :return: payload of the event subscription
+        """
         for subscription in self.__dict__.values():
             if subscription["payload"]["type"] == subscription_type:
                 return subscription
 
 
 class TriggerSignal:
+    """
+    List of signal to trigger callback
+    """
     MESSAGE = "message"
 
     FOLLOW = "follow"
