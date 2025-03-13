@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] (13/03/2025)
 
 ### Added 
 - Add cheer event notification handler
