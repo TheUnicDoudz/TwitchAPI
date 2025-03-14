@@ -38,6 +38,7 @@ class TwitchRightType:
     CHANNEL_BOT = "channel:bot"
     MODERATOR_READ_FOLLOWERS = "moderator:read:followers"
     MODERATOR_READ_CHATTERS = "moderator:read:chatters"
+    MODERATOR_MANAGE_BANNED_USERS = "moderator:manage:banned_users"
     CHANNEL_MODERATE = "channel:moderate"
     CHANNEL_READ_SUBSCRIPTIONS = "channel:read:subscriptions"
     CHANNEL_READ_REDEMPTIONS = "channel:read:redemptions"

@@ -282,15 +282,16 @@ class DataBaseManager:
         db.commit()
         db.close()
 
-    def __lock_method(self, callback: Callable):
+    @staticmethod
+    def __lock_method(callback: Callable):
         """
         Decorator to prevent database queries from colliding
         :param callback: function that will be encapsulated by the semaphore
         """
 
-        def wrapper(*args, **kwargs):
+        def wrapper(self, *args, **kwargs):
             self.__lock.acquire()
-            data = callback(*args, **kwargs)
+            data = callback(self, *args, **kwargs)
             self.__lock.release()
             return data
 

@@ -73,6 +73,7 @@ class AuthServer():
         self.__client_secret = None
         self.__credentials = None
         self.__headers = None
+        self.__token_file_path = None
 
         if start is True:
             self.start()
@@ -208,8 +209,9 @@ class AuthServer():
         logging.debug(f"OAuth token: {access_token}")
         logging.debug(f"Refresh token: {refresh_token}")
 
-        self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date}
-        with open(ACCESS_TOKEN_FILE, "w") as f:
+        self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date,
+                              "scope": scope}
+        with open(self.__token_file_path, "w") as f:
             json.dump(self.__credentials, f)
 
         # Update the header
@@ -250,7 +252,7 @@ class AuthServer():
         # This is due to the estimated expiry date of the refresh token, which is approximately 30 days
         expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
         self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date}
-        with open(ACCESS_TOKEN_FILE, "w") as f:
+        with open(self.__token_file_path, "w") as f:
             json.dump(self.__credentials, f)
 
         # Update the header
@@ -305,29 +307,32 @@ class AuthServer():
         """
         return requests.post(url=endpoint, json=data, headers=self.__headers)
 
-    def authentication(self, client_id: str, client_secret: str, scope: list[str], timeout: int = DEFAULT_TIMEOUT,
+    def authentication(self, client_id: str, client_secret: str, scope: list[str],
+                       token_file_path: str = ACCESS_TOKEN_FILE, timeout: int = DEFAULT_TIMEOUT,
                        redirect_uri: str = REDIRECT_URI_AUTH):
         """
         Set authentication header and authenticate with Twitch to create access token as needed
         :param client_id: id of the client twitch application
         :param client_secret: secret of the client twitch application
+        :param token_file_path: path of the file where access token is stored
         :param scope: token rights list
         :param redirect_uri: Uri of the callback server
         """
         self._client_id = client_id
         self.__client_secret = client_secret
+        self.__token_file_path = token_file_path
 
-        if not os.path.exists(ACCESS_TOKEN_FILE):
+        if not os.path.exists(self.__token_file_path):
             self.get_access_token(client_id=client_id, client_secret=client_secret, scope=scope,
                                   redirect_uri=redirect_uri, timeout=timeout)
         else:
-            with open(ACCESS_TOKEN_FILE, "r") as f:
+            with open(self.__token_file_path, "r") as f:
                 self.__credentials = json.load(f)
 
-            if sorted(scope) != self.__credentials["scope"] or datetime.strptime(self.__credentials["expire_date"],
+            if sorted(scope) != sorted(self.__credentials["scope"]) or datetime.strptime(self.__credentials["expire_date"],
                                                                                  '%d/%m/%Y') <= datetime.now():
-                os.remove(ACCESS_TOKEN_FILE)
-                self.authentication(client_id, client_secret, scope, timeout, redirect_uri)
+                os.remove(self.__token_file_path)
+                self.authentication(client_id, client_secret, scope, self.__token_file_path, timeout, redirect_uri)
 
             else:
                 self.__headers = {
