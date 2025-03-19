@@ -196,7 +196,7 @@ class ChatBot:
         self.__auth.post_request(TwitchEndpoint.apply_param(TwitchEndpoint.BAN, channel_id=self._channel_id,
                                                             moderator_id=self._bot_id), data=data)
 
-    def receive_message(self, id: str, user_name: str, text: str, cheer: bool, emote: bool, thread_id: str,
+    def receive_message(self, id: str, user_id:str, user_name: str, text: str, cheer: bool, emote: bool, thread_id: str,
                         parent_id: str):
         """
         Triggered callback when the EventSub websocket receive a message notification
@@ -210,7 +210,7 @@ class ChatBot:
         """
         pass
 
-    def channel_reward(self, user_name: str, reward_name: str):
+    def channel_reward(self, user_id:str, user_name: str, reward_name: str):
         """
         Triggered callback when the EventSub websocket receive a channel reward notification
         :param user_name: name of the user that claims the reward
@@ -228,14 +228,14 @@ class ChatBot:
         """
         pass
 
-    def new_follow(self, user_name: str):
+    def new_follow(self, user_id:str, user_name: str):
         """
         Triggered callback when the EventSub websocket receive a follow notification
         :param user_name: name of the user that follows the broadcaster channel
         """
         pass
 
-    def new_subscribe(self, user_name: str, tier: str, is_gift: bool):
+    def new_subscribe(self, user_id:str, user_name: str, tier: str, is_gift: bool):
         """
         Triggered callback when the EventSub websocket receive a subscribe notification
         :param user_name: name of the user that subscribes to the broadcaster channel

@@ -267,7 +267,7 @@ class EventSub(WebSocketApp):
         emote = True if len(event["message"]["fragments"]) > 1 else False
         thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
         parent_id = event["reply"]['parent_message_id'] if event["reply"] else None
-        last_message = {"id": id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
+        last_message = {"id": id, "user_id":user_id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
                         "thread_id": thread_id, "parent_id": parent_id}
 
         self.__trigger_map.trigger(TriggerSignal.MESSAGE, param=last_message)
@@ -291,13 +291,13 @@ class EventSub(WebSocketApp):
         :param date: timestamp of the notification
         """
         user = event["user_name"]
+        user_id = event["user_id"]
         reward_name = event["reward"]["title"]
         self.__trigger_map.trigger(TriggerSignal.CHANNEL_POINT_ACTION,
-                                   param={"user_name": user, "reward_name": reward_name})
+                                   param={"user_name": user, "reward_name": reward_name, "user_id":user_id})
 
         if self.__store_in_db:
             id = event["id"]
-            user_id = event["user_id"]
             reward_id = event["reward"]["id"]
             reward_prompt = event["reward"]["prompt"]
             status = event["status"]
@@ -335,10 +335,10 @@ class EventSub(WebSocketApp):
         :param date: timestamp of the notification
         """
         user = event["user_name"]
-        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user})
+        user_id = event["user_id"]
+        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user, "user_id": user_id})
 
         if self.__store_in_db:
-            user_id = event["user_id"]
             follow_date = event["followed_at"][:-4]
             self.__dbmanager.execute_script(DataBaseTemplate.FOLLOW, id=id, user=user, user_id=user_id, date=date,
                                             follow_date=follow_date)
@@ -353,11 +353,11 @@ class EventSub(WebSocketApp):
         user = event["user_name"]
         tier = event["tier"]
         is_gift = event["is_gift"]
+        user_id = event["user_id"]
         self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE, param={"user_name": user, "tier": tier,
-                                                                   "is_gift": is_gift})
+                                                                   "is_gift": is_gift, "user_id": user_id})
 
         if self.__store_in_db:
-            user_id = event["user_id"]
             self.__dbmanager.execute_script(DataBaseTemplate.SUBSCRIBE, id=id, user=user, user_id=user_id, date=date,
                                             tier=tier, is_gift=str(is_gift).upper())
 
