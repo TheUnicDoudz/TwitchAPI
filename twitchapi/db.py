@@ -263,6 +263,7 @@ class DataBaseManager:
         Initialize the SQLite database
         :param db_path: path of the database
         """
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         db = sqlite3.connect(database=db_path, check_same_thread=False)
         cursor = db.cursor()
 
