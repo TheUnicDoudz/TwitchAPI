@@ -16,6 +16,7 @@ class TwitchEndpoint:
     GET_FOLLOWERS = "channels/followers?broadcaster_id=<channel_id>"
     GET_SUBSCRIBERS = "subscriptions?broadcaster_id=<channel_id>"
     GET_CHATTERS = "chat/chatters?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
+    GET_BAN = "moderation/banned?broadcaster_id=<channel_id>"
     BAN = "moderation/bans?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
 
     @staticmethod
@@ -61,8 +62,10 @@ class TwitchSubscriptionType:
     FOLLOW = "channel.follow"
 
     BAN = "channel.ban"
+    UNBAN = "channel.unban"
 
     SUBSCRIBE = "channel.subscribe"
+    SUBSCRIBE_END = "channel.subscription.end"
     SUBGIFT = "channel.subscription.gift"
     RESUB_MESSAGE = "channel.subscription.message"
 
@@ -127,10 +130,32 @@ class TwitchSubscriptionModel:
             "streamer_only": True
         }
 
+        self.UNBAN = {
+            "right": [TwitchRightType.CHANNEL_MODERATE],
+            "payload": {
+                "type": TwitchSubscriptionType.UNBAN,
+                "version": "1",
+                "condition": {
+                    "broadcaster_user_id": broadcaster_user_id,
+                }
+            },
+            "streamer_only": True
+        }
+
         self.SUBSCRIBE = {
             "right": [TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS],
             "payload": {
                 "type": TwitchSubscriptionType.SUBSCRIBE,
+                "version": "1",
+                "condition": {"broadcaster_user_id": broadcaster_user_id}
+            },
+            "streamer_only": True
+        }
+
+        self.SUBSCRIBE_END = {
+            "right": [TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS],
+            "payload": {
+                "type": TwitchSubscriptionType.SUBSCRIBE_END,
                 "version": "1",
                 "condition": {"broadcaster_user_id": broadcaster_user_id}
             },
@@ -331,8 +356,10 @@ class TriggerSignal:
     FOLLOW = "follow"
 
     BAN = "ban"
+    UNBAN = "unban"
 
     SUBSCRIBE = "subscribe"
+    SUBSCRIBE_END = "subscribe_end"
     SUBGIFT = "subgift"
     RESUB_MESSAGE = "resub_message"
 

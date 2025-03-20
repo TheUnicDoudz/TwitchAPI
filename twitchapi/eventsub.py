@@ -107,6 +107,10 @@ class EventSub(WebSocketApp):
                             logging.info("Process a subscribe")
                             self.__process_subscribe(event=event, date=msg_timestamp, id=id)
 
+                        case TwitchSubscriptionType.SUBSCRIBE_END:
+                            logging.info("Process an end subscription")
+                            self.__process_end_subscribe(event=event, date=msg_timestamp, id=id)
+
                         case TwitchSubscriptionType.SUBGIFT:
                             logging.info("Process a subgitf")
                             self.__process_subgift(event=event, date=msg_timestamp, id=id)
@@ -361,6 +365,16 @@ class EventSub(WebSocketApp):
             self.__dbmanager.execute_script(DataBaseTemplate.SUBSCRIBE, id=id, user=user, user_id=user_id, date=date,
                                             tier=tier, is_gift=str(is_gift).upper())
 
+    def __process_end_subscribe(self, event: dict):
+        """
+        When an end subscription notification is sent, extract all relevant information and trigger the associated
+        callback
+        :param event: event payload of the notification
+        """
+        user = event["user_name"]
+        user_id = event["user_id"]
+        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE_END, param={"user_name": user, "user_id": user_id})
+
     def __process_subgift(self, event: dict, id: str, date: str):
         """
         When a subscription gift notification is sent, extract all relevant information and trigger the associated
@@ -557,6 +571,7 @@ class EventSub(WebSocketApp):
         :param id: id of the notification
         """
         user = event["user_name"]
+        user_id = event["user_id"]
         reason = event["reason"]
         ban_date = event["banned_at"]
         end_ban = event["ends_at"]
@@ -564,7 +579,7 @@ class EventSub(WebSocketApp):
         moderator_name = event["moderator_user_name"]
         self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "moderator_name": moderator_name,
                                                              "reason": reason, "start_ban": ban_date,
-                                                             "end_ban": end_ban, "permanent": permanent})
+                                                             "end_ban": end_ban, "permanent": permanent, "user_id": user_id})
 
         if self.__store_in_db:
             user_id = event["user_id"]
@@ -572,6 +587,15 @@ class EventSub(WebSocketApp):
             self.__dbmanager.execute_script(DataBaseTemplate.BAN, id=id, user=user, user_id=user_id,
                                             moderator=moderator_id, moderator_id=moderator_id, reason=reason,
                                             start_ban=ban_date, end_ban=end_ban, is_permanent=permanent)
+
+    def __process_unban(self, event: dict):
+        """
+        When an unban notification is sent, extract all relevant information and trigger the associated callback
+        :param event: event payload of the notification
+        """
+        user = event["user_name"]
+        user_id = event["user_id"]
+        self.__trigger_map.trigger(TriggerSignal.UNBAN, param={"user_name": user, "user_id": user_id})
 
     def __process_vip_add(self, event: dict, date: str):
         """
