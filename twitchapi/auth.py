@@ -251,7 +251,8 @@ class AuthServer():
         # The expiry date is today's date + 25 days
         # This is due to the estimated expiry date of the refresh token, which is approximately 30 days
         expire_date = (datetime.now() + timedelta(25)).strftime('%d/%m/%Y')
-        self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date}
+        self.__credentials = {"access_token": access_token, "refresh_token": refresh_token, "expire_date": expire_date,
+                              "scope": self.__credentials["scope"]}
         with open(self.__token_file_path, "w") as f:
             json.dump(self.__credentials, f)
 
