@@ -8,7 +8,7 @@ from websocket import WebSocketApp
 from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, \
     TwitchSubscriptionType
 from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
-from twitchapi.db import DataBaseManager, DataBaseTemplate
+from twitchapi.db import DataBaseManager, DataBaseTemplate, format_text
 from twitchapi.utils import TriggerMap
 from twitchapi.auth import AuthServer
 
@@ -266,7 +266,7 @@ class EventSub(WebSocketApp):
         id = event['message_id']
         user_name = event["chatter_user_name"]
         user_id = event["chatter_user_id"]
-        message = event["message"]["text"]
+        message = format_text(event["message"]["text"])
         cheer = True if event["cheer"] else False
         emote = True if len(event["message"]["fragments"]) > 1 else False
         thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
@@ -413,7 +413,7 @@ class EventSub(WebSocketApp):
         streak = event["streak_months"]
         total = event["cumulative_months"]
         duration = event["duration_months"]
-        message = event["message"]["text"]
+        message = format_text(event["message"]["text"])
         self.__trigger_map.trigger(TriggerSignal.RESUB_MESSAGE, param={"user_name": user, "tier": tier,
                                                                        "streak": streak, "total": total,
                                                                        "duration": duration, "message": message})
@@ -648,7 +648,7 @@ class EventSub(WebSocketApp):
         bits_number = event["bits"]
         type = event["type"]
         power_up = event["power_up"]
-        message = event["message"]["text"]
+        message = format_text(event["message"]["text"])
         self.__trigger_map.trigger(TriggerSignal.BITS, param={"user_name": user, "bits": bits_number, "type": type,
                                                               "power_up": power_up, "message": message})
 

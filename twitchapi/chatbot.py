@@ -130,8 +130,9 @@ class ChatBot:
         Start the EventSub websocket on the host to catch EventSub notification from Twitch
         """
         try:
-            logging.info("Run Event Server!")
-            self.__event_sub.run_forever()
+            while True:
+                logging.info("Run Event Server!")
+                self.__event_sub.run_forever()
         except KillThreadException:
             logging.info("Stop Event Server")
 

@@ -9,6 +9,9 @@ import os
 from twitchapi.exception import KillThreadException
 from twitchapi.utils import ThreadWithExc
 
+def format_text(text:str):
+    return text.replace("\"", " ").replace("\'", " ")
+
 
 class DataBaseTemplate:
     """
