@@ -2,6 +2,7 @@ from typing import Any
 import logging
 import json
 import os
+import traceback
 
 from websocket import WebSocketApp
 
@@ -177,6 +178,7 @@ class EventSub(WebSocketApp):
 
                 except Exception as e:
                     logging.error(str(e.__class__.__name__) + ": " + str(e))
+                    logging.error(traceback.format_exc())
 
     def on_error(self, ws, message):
         """
