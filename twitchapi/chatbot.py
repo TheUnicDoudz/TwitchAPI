@@ -1,4 +1,5 @@
 import logging
+import time
 
 from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, TwitchRightType
 from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
@@ -133,6 +134,7 @@ class ChatBot:
             while True:
                 logging.info("Run Event Server!")
                 self.__event_sub.run_forever()
+                time.sleep(11)
         except KillThreadException:
             logging.info("Stop Event Server")
 
