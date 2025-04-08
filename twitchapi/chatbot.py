@@ -134,7 +134,6 @@ class ChatBot:
             while True:
                 logging.info("Run Event Server!")
                 self.__event_sub.run_forever()
-                time.sleep(11)
         except KillThreadException:
             logging.info("Stop Event Server")
 
