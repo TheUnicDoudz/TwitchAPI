@@ -276,11 +276,11 @@ class AuthServer():
             if data:
                 params["data"] = data
             response = request_function(**params)
-            if not (100 > response.status_code > 300):
+            if not (100 < response.status_code < 300):
                 if response.status_code == 401:
                     self.refresh_token()
                     response = request_function(**params)
-                    if not (100 > response.status_code > 300):
+                    if not (100 < response.status_code < 300):
                         logging.error(response.content)
                         raise TwitchAuthentificationError("Something's wrong with the access token!!")
                 else:
