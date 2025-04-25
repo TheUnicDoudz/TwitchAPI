@@ -110,7 +110,7 @@ class EventSub(WebSocketApp):
 
                         case TwitchSubscriptionType.SUBSCRIBE_END:
                             logging.info("Process an end subscription")
-                            self.__process_end_subscribe(event=event, date=msg_timestamp, id=id)
+                            self.__process_end_subscribe(event=event)
 
                         case TwitchSubscriptionType.SUBGIFT:
                             logging.info("Process a subgitf")
