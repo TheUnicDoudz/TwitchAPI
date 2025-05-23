@@ -1,5 +1,16 @@
 # Changelog
 
+## [UNRELEASED]
+
+### Fixed
+- Possible to specify the path of the access token file
+- Check of scope is made on sorted scope
+- Fix lock method of DataBaseManager to get self parameter
+
+### Added
+- Add requirements.txt
+- Add right for moderator to ban user
+
 ## [0.2.0] (13/03/2025)
 
 ### Added 

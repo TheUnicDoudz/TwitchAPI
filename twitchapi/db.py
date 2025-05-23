@@ -9,6 +9,9 @@ import os
 from twitchapi.exception import KillThreadException
 from twitchapi.utils import ThreadWithExc
 
+def format_text(text:str):
+    return text.replace("\"", " ").replace("\'", " ")
+
 
 class DataBaseTemplate:
     """
@@ -263,6 +266,7 @@ class DataBaseManager:
         Initialize the SQLite database
         :param db_path: path of the database
         """
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         db = sqlite3.connect(database=db_path, check_same_thread=False)
         cursor = db.cursor()
 
@@ -282,15 +286,16 @@ class DataBaseManager:
         db.commit()
         db.close()
 
-    def __lock_method(self, callback: Callable):
+    @staticmethod
+    def __lock_method(callback: Callable):
         """
         Decorator to prevent database queries from colliding
         :param callback: function that will be encapsulated by the semaphore
         """
 
-        def wrapper(*args, **kwargs):
+        def wrapper(self, *args, **kwargs):
             self.__lock.acquire()
-            data = callback(*args, **kwargs)
+            data = callback(self, *args, **kwargs)
             self.__lock.release()
             return data
 

@@ -2,13 +2,14 @@ from typing import Any
 import logging
 import json
 import os
+import traceback
 
 from websocket import WebSocketApp
 
 from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, \
     TwitchSubscriptionType
 from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
-from twitchapi.db import DataBaseManager, DataBaseTemplate
+from twitchapi.db import DataBaseManager, DataBaseTemplate, format_text
 from twitchapi.utils import TriggerMap
 from twitchapi.auth import AuthServer
 
@@ -107,6 +108,10 @@ class EventSub(WebSocketApp):
                             logging.info("Process a subscribe")
                             self.__process_subscribe(event=event, date=msg_timestamp, id=id)
 
+                        case TwitchSubscriptionType.SUBSCRIBE_END:
+                            logging.info("Process an end subscription")
+                            self.__process_end_subscribe(event=event)
+
                         case TwitchSubscriptionType.SUBGIFT:
                             logging.info("Process a subgitf")
                             self.__process_subgift(event=event, date=msg_timestamp, id=id)
@@ -173,6 +178,7 @@ class EventSub(WebSocketApp):
 
                 except Exception as e:
                     logging.error(str(e.__class__.__name__) + ": " + str(e))
+                    logging.error(traceback.format_exc())
 
     def on_error(self, ws, message):
         """
@@ -262,12 +268,12 @@ class EventSub(WebSocketApp):
         id = event['message_id']
         user_name = event["chatter_user_name"]
         user_id = event["chatter_user_id"]
-        message = event["message"]["text"]
+        message = format_text(event["message"]["text"])
         cheer = True if event["cheer"] else False
         emote = True if len(event["message"]["fragments"]) > 1 else False
         thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
         parent_id = event["reply"]['parent_message_id'] if event["reply"] else None
-        last_message = {"id": id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
+        last_message = {"id": id, "user_id":user_id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
                         "thread_id": thread_id, "parent_id": parent_id}
 
         self.__trigger_map.trigger(TriggerSignal.MESSAGE, param=last_message)
@@ -291,13 +297,13 @@ class EventSub(WebSocketApp):
         :param date: timestamp of the notification
         """
         user = event["user_name"]
+        user_id = event["user_id"]
         reward_name = event["reward"]["title"]
         self.__trigger_map.trigger(TriggerSignal.CHANNEL_POINT_ACTION,
-                                   param={"user_name": user, "reward_name": reward_name})
+                                   param={"user_name": user, "reward_name": reward_name, "user_id":user_id})
 
         if self.__store_in_db:
             id = event["id"]
-            user_id = event["user_id"]
             reward_id = event["reward"]["id"]
             reward_prompt = event["reward"]["prompt"]
             status = event["status"]
@@ -335,10 +341,10 @@ class EventSub(WebSocketApp):
         :param date: timestamp of the notification
         """
         user = event["user_name"]
-        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user})
+        user_id = event["user_id"]
+        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user, "user_id": user_id})
 
         if self.__store_in_db:
-            user_id = event["user_id"]
             follow_date = event["followed_at"][:-4]
             self.__dbmanager.execute_script(DataBaseTemplate.FOLLOW, id=id, user=user, user_id=user_id, date=date,
                                             follow_date=follow_date)
@@ -353,13 +359,23 @@ class EventSub(WebSocketApp):
         user = event["user_name"]
         tier = event["tier"]
         is_gift = event["is_gift"]
+        user_id = event["user_id"]
         self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE, param={"user_name": user, "tier": tier,
-                                                                   "is_gift": is_gift})
+                                                                   "is_gift": is_gift, "user_id": user_id})
 
         if self.__store_in_db:
-            user_id = event["user_id"]
             self.__dbmanager.execute_script(DataBaseTemplate.SUBSCRIBE, id=id, user=user, user_id=user_id, date=date,
                                             tier=tier, is_gift=str(is_gift).upper())
+
+    def __process_end_subscribe(self, event: dict):
+        """
+        When an end subscription notification is sent, extract all relevant information and trigger the associated
+        callback
+        :param event: event payload of the notification
+        """
+        user = event["user_name"]
+        user_id = event["user_id"]
+        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE_END, param={"user_name": user, "user_id": user_id})
 
     def __process_subgift(self, event: dict, id: str, date: str):
         """
@@ -399,7 +415,7 @@ class EventSub(WebSocketApp):
         streak = event["streak_months"]
         total = event["cumulative_months"]
         duration = event["duration_months"]
-        message = event["message"]["text"]
+        message = format_text(event["message"]["text"])
         self.__trigger_map.trigger(TriggerSignal.RESUB_MESSAGE, param={"user_name": user, "tier": tier,
                                                                        "streak": streak, "total": total,
                                                                        "duration": duration, "message": message})
@@ -557,6 +573,7 @@ class EventSub(WebSocketApp):
         :param id: id of the notification
         """
         user = event["user_name"]
+        user_id = event["user_id"]
         reason = event["reason"]
         ban_date = event["banned_at"]
         end_ban = event["ends_at"]
@@ -564,7 +581,7 @@ class EventSub(WebSocketApp):
         moderator_name = event["moderator_user_name"]
         self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "moderator_name": moderator_name,
                                                              "reason": reason, "start_ban": ban_date,
-                                                             "end_ban": end_ban, "permanent": permanent})
+                                                             "end_ban": end_ban, "permanent": permanent, "user_id": user_id})
 
         if self.__store_in_db:
             user_id = event["user_id"]
@@ -572,6 +589,15 @@ class EventSub(WebSocketApp):
             self.__dbmanager.execute_script(DataBaseTemplate.BAN, id=id, user=user, user_id=user_id,
                                             moderator=moderator_id, moderator_id=moderator_id, reason=reason,
                                             start_ban=ban_date, end_ban=end_ban, is_permanent=permanent)
+
+    def __process_unban(self, event: dict):
+        """
+        When an unban notification is sent, extract all relevant information and trigger the associated callback
+        :param event: event payload of the notification
+        """
+        user = event["user_name"]
+        user_id = event["user_id"]
+        self.__trigger_map.trigger(TriggerSignal.UNBAN, param={"user_name": user, "user_id": user_id})
 
     def __process_vip_add(self, event: dict, date: str):
         """
@@ -624,7 +650,7 @@ class EventSub(WebSocketApp):
         bits_number = event["bits"]
         type = event["type"]
         power_up = event["power_up"]
-        message = event["message"]["text"]
+        message = format_text(event["message"]["text"])
         self.__trigger_map.trigger(TriggerSignal.BITS, param={"user_name": user, "bits": bits_number, "type": type,
                                                               "power_up": power_up, "message": message})
 

@@ -1,8 +1,9 @@
 import logging
+import time
 
 from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, TwitchRightType
 from twitchapi.exception import TwitchMessageNotSentWarning, KillThreadException
-from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT
+from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT, ACCESS_TOKEN_FILE
 from twitchapi.utils import ThreadWithExc, TriggerMap
 from twitchapi.eventsub import EventSub
 
@@ -14,9 +15,11 @@ class ChatBot:
     """
     # Default right required for all methods making requests to the Twitch API
     DEFAULT_RIGHT = [TwitchRightType.MODERATOR_READ_FOLLOWERS, TwitchRightType.USER_WRITE_CHAT,
-                     TwitchRightType.MODERATOR_READ_CHATTERS, TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS]
+                     TwitchRightType.MODERATOR_READ_CHATTERS, TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS,
+                     TwitchRightType.MODERATOR_MANAGE_BANNED_USERS]
 
-    def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str, subscriptions: list[str],
+    def __init__(self, client_id: str, client_secret: str, bot_name: str, channel_name: str,
+                 subscriptions: list[str] = None, token_file_path: str = ACCESS_TOKEN_FILE,
                  redirect_uri_auth: str = REDIRECT_URI_AUTH, timeout=DEFAULT_TIMEOUT, right: list[str] = None,
                  channel_point_subscription: list[str] = None, store_in_db: bool = False):
         """
@@ -35,50 +38,55 @@ class ChatBot:
         self.__client_secret = client_secret
 
         self.__subscription = subscriptions
+
         # Default rights are estimated by the maximum number of rights required for each event subscription.
-        if not right:
+        if not right and self.__subscription:
             self.__right = TwitchSubscriptionModel("", "").which_right(self.__subscription)
-        else:
+        elif right:
             self.__right = right
+        else:
+            self.__right = []
 
         self.__right += self.DEFAULT_RIGHT
 
         # Performs authentication
         self.__auth = AuthServer()
         self.__auth.authentication(client_id=client_id, client_secret=client_secret, scope=self.__right,
-                                   timeout=timeout, redirect_uri=redirect_uri_auth)
+                                   token_file_path=token_file_path, timeout=timeout, redirect_uri=redirect_uri_auth)
 
         self._bot_id = self._get_id(bot_name)
         logging.debug("Bot id: " + self._bot_id)
         self._channel_id = self._get_id(channel_name)
         logging.debug("Channel id: " + self._channel_id)
 
-        # Link each Twitch event notification (follow, sub, raid, ...) to a chatbot method that can be overridden as
-        # needed
-        self.__trigger_map = TriggerMap()
-        self.__trigger_map.add_trigger(self.receive_message, TriggerSignal.MESSAGE)
-        self.__trigger_map.add_trigger(self.new_follow, TriggerSignal.FOLLOW)
-        self.__trigger_map.add_trigger(self.new_ban, TriggerSignal.BAN)
-        self.__trigger_map.add_trigger(self.new_subscribe, TriggerSignal.SUBSCRIBE)
-        self.__trigger_map.add_trigger(self.new_subgift, TriggerSignal.SUBGIFT)
-        self.__trigger_map.add_trigger(self.new_resub, TriggerSignal.RESUB_MESSAGE)
-        self.__trigger_map.add_trigger(self.raid_on_caster, TriggerSignal.RAID)
-        self.__trigger_map.add_trigger(self.raid_someone, TriggerSignal.RAID_SOMEONE)
-        self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT_ACTION)
-        self.__trigger_map.add_trigger(self.channel_cheer, TriggerSignal.CHANNEL_CHEER)
-        self.__trigger_map.add_trigger(self.new_poll, TriggerSignal.POLL_BEGIN)
-        self.__trigger_map.add_trigger(self.poll_end, TriggerSignal.POLL_END)
-        self.__trigger_map.add_trigger(self.new_prediction, TriggerSignal.PREDICTION_BEGIN)
-        self.__trigger_map.add_trigger(self.prediction_lock, TriggerSignal.PREDICTION_LOCK)
-        self.__trigger_map.add_trigger(self.prediction_end, TriggerSignal.PREDICTION_END)
-        self.__trigger_map.add_trigger(self.new_vip, TriggerSignal.VIP_ADD)
-        self.__trigger_map.add_trigger(self.remove_vip, TriggerSignal.VIP_REMOVE)
-        self.__trigger_map.add_trigger(self.stream_online, TriggerSignal.STREAM_ONLINE)
-        self.__trigger_map.add_trigger(self.stream_offline, TriggerSignal.STREAM_OFFLINE)
-        self.__trigger_map.add_trigger(self.new_bits, TriggerSignal.BITS)
-
         # If the chatbot needs to be connected to the EventSub Twitch WebSocket
         if subscriptions:
+            # Link each Twitch event notification (follow, sub, raid, ...) to a chatbot method that can be overridden as
+            # needed
+            self.__trigger_map = TriggerMap()
+            self.__trigger_map.add_trigger(self.receive_message, TriggerSignal.MESSAGE)
+            self.__trigger_map.add_trigger(self.new_follow, TriggerSignal.FOLLOW)
+            self.__trigger_map.add_trigger(self.new_ban, TriggerSignal.BAN)
+            self.__trigger_map.add_trigger(self.new_unban, TriggerSignal.UNBAN)
+            self.__trigger_map.add_trigger(self.new_subscribe, TriggerSignal.SUBSCRIBE)
+            self.__trigger_map.add_trigger(self.end_subscribe, TriggerSignal.SUBSCRIBE_END)
+            self.__trigger_map.add_trigger(self.new_subgift, TriggerSignal.SUBGIFT)
+            self.__trigger_map.add_trigger(self.new_resub, TriggerSignal.RESUB_MESSAGE)
+            self.__trigger_map.add_trigger(self.raid_on_caster, TriggerSignal.RAID)
+            self.__trigger_map.add_trigger(self.raid_someone, TriggerSignal.RAID_SOMEONE)
+            self.__trigger_map.add_trigger(self.channel_reward, TriggerSignal.CHANNEL_POINT_ACTION)
+            self.__trigger_map.add_trigger(self.channel_cheer, TriggerSignal.CHANNEL_CHEER)
+            self.__trigger_map.add_trigger(self.new_poll, TriggerSignal.POLL_BEGIN)
+            self.__trigger_map.add_trigger(self.poll_end, TriggerSignal.POLL_END)
+            self.__trigger_map.add_trigger(self.new_prediction, TriggerSignal.PREDICTION_BEGIN)
+            self.__trigger_map.add_trigger(self.prediction_lock, TriggerSignal.PREDICTION_LOCK)
+            self.__trigger_map.add_trigger(self.prediction_end, TriggerSignal.PREDICTION_END)
+            self.__trigger_map.add_trigger(self.new_vip, TriggerSignal.VIP_ADD)
+            self.__trigger_map.add_trigger(self.remove_vip, TriggerSignal.VIP_REMOVE)
+            self.__trigger_map.add_trigger(self.stream_online, TriggerSignal.STREAM_ONLINE)
+            self.__trigger_map.add_trigger(self.stream_offline, TriggerSignal.STREAM_OFFLINE)
+            self.__trigger_map.add_trigger(self.new_bits, TriggerSignal.BITS)
+
             self.__event_sub = EventSub(bot_id=self._bot_id, channel_id=self._channel_id,
                                         subscription_types=self.__subscription, auth_server=self.__auth,
                                         trigger_map=self.__trigger_map,
@@ -123,8 +131,9 @@ class ChatBot:
         Start the EventSub websocket on the host to catch EventSub notification from Twitch
         """
         try:
-            logging.info("Run Event Server!")
-            self.__event_sub.run_forever()
+            while True:
+                logging.info("Run Event Server!")
+                self.__event_sub.run_forever()
         except KillThreadException:
             logging.info("Stop Event Server")
 
@@ -146,6 +155,13 @@ class ChatBot:
         Get all follower of the broadcaster channel
         """
         endpoint = TwitchEndpoint.apply_param(TwitchEndpoint.GET_FOLLOWERS, channel_id=self._channel_id)
+        return self.__browse_all(self.__auth.get_request, endpoint)
+
+    def get_ban_user(self):
+        """
+        Get all user banned from the broadcaster channel
+        """
+        endpoint = TwitchEndpoint.apply_param(TwitchEndpoint.GET_BAN, channel_id=self._channel_id)
         return self.__browse_all(self.__auth.get_request, endpoint)
 
     def get_connected_users(self):
@@ -189,7 +205,8 @@ class ChatBot:
         self.__auth.post_request(TwitchEndpoint.apply_param(TwitchEndpoint.BAN, channel_id=self._channel_id,
                                                             moderator_id=self._bot_id), data=data)
 
-    def receive_message(self, id: str, user_name: str, text: str, cheer: bool, emote: bool, thread_id: str,
+    def receive_message(self, id: str, user_id: str, user_name: str, text: str, cheer: bool, emote: bool,
+                        thread_id: str,
                         parent_id: str):
         """
         Triggered callback when the EventSub websocket receive a message notification
@@ -203,7 +220,7 @@ class ChatBot:
         """
         pass
 
-    def channel_reward(self, user_name: str, reward_name: str):
+    def channel_reward(self, user_id: str, user_name: str, reward_name: str):
         """
         Triggered callback when the EventSub websocket receive a channel reward notification
         :param user_name: name of the user that claims the reward
@@ -221,20 +238,27 @@ class ChatBot:
         """
         pass
 
-    def new_follow(self, user_name: str):
+    def new_follow(self, user_id: str, user_name: str):
         """
         Triggered callback when the EventSub websocket receive a follow notification
         :param user_name: name of the user that follows the broadcaster channel
         """
         pass
 
-    def new_subscribe(self, user_name: str, tier: str, is_gift: bool):
+    def new_subscribe(self, user_id: str, user_name: str, tier: str, is_gift: bool):
         """
         Triggered callback when the EventSub websocket receive a subscribe notification
         :param user_name: name of the user that subscribes to the broadcaster channel
         :param tier: tier level of the subscription ("1000" = tier 1, "2000" = tier 2, "3000" : tier 3)
         :param is_gift: if the subscription is a gift
         """
+        pass
+
+    def end_subscribe(self, user_id:str, user_name:str):
+        """
+                Triggered callback when the EventSub websocket receive an end subscription notification
+                :param user_name: name of the user that subscribes to the broadcaster channel
+                """
         pass
 
     def new_subgift(self, user_name: str, tier: str, total: int, total_gift_sub: int, is_anonymous: bool):
@@ -327,7 +351,7 @@ class ChatBot:
         """
         pass
 
-    def new_ban(self, user_name: str, moderator_name: str, reason: str, start_ban: str, end_ban: str, permanent: bool):
+    def new_ban(self, user_id:str, user_name: str, moderator_name: str, reason: str, start_ban: str, end_ban: str, permanent: bool):
         """
         Triggered callback when the EventSub websocket receive a new ban notification
         :param user_name: name of banned user
@@ -336,6 +360,13 @@ class ChatBot:
         :param start_ban: ban start date
         :param end_ban: if the ban is not permanent, ban end date
         :param permanent: True if the ban is permanent
+        """
+        pass
+
+    def new_unban(self, user_id:str, user_name:str):
+        """
+        Triggered callback when the EventSub websocket receive a new unban notification
+        :param user_name: name of banned user
         """
         pass
 
