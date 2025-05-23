@@ -109,7 +109,7 @@ class ChatBot:
         # Determine required permissions
         if not right and self.__subscription:
             try:
-                subscription_model = TwitchSubscriptionModel("", "")
+                subscription_model = TwitchSubscriptionModel("test", "test")
                 self.__right = subscription_model.which_right(self.__subscription)
             except Exception as e:
                 logger.warning(f"Failed to auto-determine rights: {e}")

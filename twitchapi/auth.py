@@ -248,14 +248,14 @@ class AuthServer:
             logging.debug(f"Authentication URL: {auth_url}")
 
             # Check that URL is accessible
-            response = requests.head(twitch_code_url, timeout=10)
+            response = requests.get(auth_url, timeout=10)
             if response.status_code != 200:
                 raise TwitchAuthorizationFailed(
                     "Unable to access Twitch authentication service"
                 )
 
             # Open browser
-            if not webbrowser.open_new(auth_url):
+            if not webbrowser.open_new(response.url):
                 logging.warning("Unable to open browser automatically")
                 print(f"Please manually open this URL: {auth_url}")
 
@@ -414,6 +414,10 @@ class AuthServer:
         try:
             # Create directory if necessary
             os.makedirs(os.path.dirname(self.__token_file_path), exist_ok=True)
+        except FileNotFoundError:
+            pass
+
+        try:
 
             with open(self.__token_file_path, "w", encoding='utf-8') as f:
                 json.dump(self.__credentials, f, indent=2)
