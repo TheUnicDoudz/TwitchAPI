@@ -155,7 +155,7 @@ class ChatBot:
             raise TwitchEndpointError(f"Failed to retrieve user information: {e}")
 
         # Initialize EventSub connection if subscriptions are provided
-        self.__event_sub = None
+        self.__event_sub : EventSub = None
         self.__thread = None
 
         if subscriptions:
@@ -222,7 +222,6 @@ class ChatBot:
 
         # Start EventSub in separate thread
         self.__thread = ThreadWithExc(target=self.__run_event_server)
-        self.__thread.daemon = True
         self.__thread.start()
 
     def _get_id(self, user_name: str) -> str:
@@ -332,7 +331,7 @@ class ChatBot:
         while retry_count < max_retries:
             try:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
-                self.__event_sub.run_forever()
+                self.__event_sub.run_forever_with_reconnect()
                 break  # Exit if run_forever completes normally
 
             except KillThreadException:
