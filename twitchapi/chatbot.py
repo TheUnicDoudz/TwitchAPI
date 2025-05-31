@@ -331,8 +331,7 @@ class ChatBot:
         while retry_count < max_retries:
             try:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
-                self.__event_sub.run_forever_with_reconnect()
-                break  # Exit if run_forever completes normally
+                self.__event_sub.run_forever()
 
             except KillThreadException:
                 logger.info("EventSub server stopped by request")

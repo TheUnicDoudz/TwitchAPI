@@ -13,7 +13,6 @@ import logging
 import json
 import os
 import traceback
-import time
 
 from websocket import WebSocketApp
 
@@ -96,12 +95,6 @@ class EventSub(WebSocketApp):
         self._channel_id = channel_id
         self._subscription_types = subscription_types[:]  # Create copy
         self.__channel_point_subscription = channel_point_subscription or []
-
-        # Connection state
-        self.keep_running = True
-        self.__reconnect_attempts = 0
-        self.__max_reconnect_attempts = 5
-        self.__reconnect_delay = 30  # seconds
 
         # Initialize subscription model
         try:
@@ -290,11 +283,6 @@ class EventSub(WebSocketApp):
         """
         logger.error(f"WebSocket error: {error}")
 
-        # Check if we should attempt reconnection
-        if self.keep_running and self.__reconnect_attempts < self.__max_reconnect_attempts:
-            self.__reconnect_attempts += 1
-            logger.info(f"Scheduling reconnection attempt {self.__reconnect_attempts}")
-
     def on_close(self, ws, close_status_code, close_msg) -> None:
         """
         Handle WebSocket connection closure.
@@ -322,36 +310,6 @@ class EventSub(WebSocketApp):
             ws: WebSocket connection instance
         """
         logger.info(f"Connected to EventSub WebSocket: {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
-
-    def run_forever_with_reconnect(self) -> None:
-        """
-        Run WebSocket with automatic reconnection on failure.
-
-        This method will attempt to reconnect automatically if the connection
-        is lost, up to the maximum number of retry attempts.
-        """
-        while self.keep_running and self.__reconnect_attempts < self.__max_reconnect_attempts:
-            try:
-                logger.info("Starting EventSub WebSocket connection")
-                self.run_forever()
-                break  # Exit loop if run_forever completes normally
-
-            except KeyboardInterrupt:
-                logger.info("EventSub stopped by user")
-                break
-
-            except Exception as e:
-                self.__reconnect_attempts += 1
-                logger.error(f"EventSub connection error: {e}")
-
-                if self.keep_running and self.__reconnect_attempts < self.__max_reconnect_attempts:
-                    logger.info(f"Reconnecting in {self.__reconnect_delay} seconds...")
-                    time.sleep(self.__reconnect_delay)
-                    # Exponential backoff
-                    self.__reconnect_delay = min(self.__reconnect_delay * 1.5, 300)
-                else:
-                    logger.error("Max reconnection attempts reached")
-                    break
 
     def __subscription(self) -> None:
         """
