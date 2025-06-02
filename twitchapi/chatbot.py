@@ -50,7 +50,8 @@ class ChatBot:
         TwitchRightType.USER_WRITE_CHAT,
         TwitchRightType.MODERATOR_READ_CHATTERS,
         TwitchRightType.CHANNEL_READ_SUBSCRIPTIONS,
-        TwitchRightType.MODERATOR_MANAGE_BANNED_USERS
+        TwitchRightType.MODERATOR_MANAGE_BANNED_USERS,
+        TwitchRightType.CLIPS_EDIT
     ]
 
     def __init__(self,
@@ -454,6 +455,29 @@ class ChatBot:
         except Exception as e:
             logger.error(f"Failed to get connected users: {e}")
             raise TwitchEndpointError(f"Failed to retrieve connected users: {e}")
+
+    def create_clips(self, has_delay:bool=False) -> str:
+        """
+        Create a editable clips (30s before the moment the clip is asked)
+        :param has_delay: the end clip is delayed
+        :return: an url to edit the clip
+        """
+        try:
+            data = {
+                "broadcaster_id" : self._channel_id,
+                "has_delay":has_delay
+            }
+            response = self.__auth.post_request(TwitchEndpoint.CLIPS, data=data)
+
+            data = response.get("data", [])
+            if data:
+                return data["edit_url"]
+            else:
+                raise TwitchEndpointError("No data retrieve!")
+        except Exception as e:
+            logger.error(f"Failed to clip: {e}")
+            raise TwitchEndpointError(f"Failed to clip: {e}")
+
 
     def __browse_all(self, callback, endpoint: str) -> List[Dict[str, Any]]:
         """

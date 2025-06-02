@@ -52,6 +52,9 @@ class TwitchEndpoint:
     GET_BAN = "moderation/banned?broadcaster_id=<channel_id>"
     BAN = "moderation/bans?broadcaster_id=<channel_id>&moderator_id=<moderator_id>"
 
+    # Create clips
+    CLIPS = "clips"
+
     @staticmethod
     def apply_param(endpoint: str, **kwargs) -> str:
         """
