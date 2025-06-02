@@ -328,7 +328,7 @@ class ChatBot:
         retry_delay = 30  # seconds
         retry_count = 0
 
-        while retry_count:
+        while True:
             try:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
                 self.__event_sub.run_forever()
