@@ -150,6 +150,9 @@ class TwitchRightType:
     USER_BOT = "user:bot"
     CHANNEL_BOT = "channel:bot"
 
+    # Edit clips
+    CLIPS_EDIT = "clips:edit"
+
     # Moderation permissions  
     MODERATOR_READ_FOLLOWERS = "moderator:read:followers"
     MODERATOR_READ_CHATTERS = "moderator:read:chatters"
