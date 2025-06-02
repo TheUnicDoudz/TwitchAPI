@@ -325,11 +325,10 @@ class ChatBot:
         This method runs in a separate thread and handles reconnection
         attempts if the WebSocket connection is lost.
         """
-        max_retries = 5
         retry_delay = 30  # seconds
         retry_count = 0
 
-        while retry_count < max_retries:
+        while retry_count:
             try:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
                 self.__event_sub.run_forever()
@@ -341,14 +340,9 @@ class ChatBot:
             except Exception as e:
                 retry_count += 1
                 logger.error(f"EventSub server error: {e}")
-
-                if retry_count < max_retries:
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    # Exponential backoff
-                    retry_delay = min(retry_delay * 2, 300)  # Max 5 minutes
-                else:
-                    logger.error("Max retries reached, EventSub server stopped")
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay)  # 30 seconds
 
     def stop_event_server(self) -> None:
         """
