@@ -160,7 +160,7 @@ class EventSub(WebSocketApp):
                 logger.debug("Received keepalive message")
             elif message_type == "session_reconnect":
                 logger.info("Received reconnect request from Twitch")
-                self._handle_reconnect(payload)
+                self.close()
             else:
                 logger.warning(f"Unknown message type: {message_type}")
 
@@ -250,28 +250,6 @@ class EventSub(WebSocketApp):
         except Exception as e:
             logger.error(f"Error processing notification: {e}")
             logger.debug(f"Error traceback: {traceback.format_exc()}")
-
-    def _handle_reconnect(self, payload: Dict[str, Any]) -> None:
-        """
-        Handle reconnection request from Twitch.
-
-        Args:
-            payload: Reconnect payload with new connection URL
-        """
-        try:
-            session_data = payload.get("session", {})
-            reconnect_url = session_data.get("reconnect_url")
-
-            if reconnect_url:
-                logger.info(f"Reconnecting to: {reconnect_url}")
-                self.url = reconnect_url
-                self.close()
-                # The reconnection will be handled by the calling code
-            else:
-                logger.warning("Reconnect request without URL")
-
-        except Exception as e:
-            logger.error(f"Failed to handle reconnect: {e}")
 
     def on_error(self, ws, error) -> None:
         """

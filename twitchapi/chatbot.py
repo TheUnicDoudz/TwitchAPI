@@ -156,7 +156,7 @@ class ChatBot:
             raise TwitchEndpointError(f"Failed to retrieve user information: {e}")
 
         # Initialize EventSub connection if subscriptions are provided
-        self.__event_sub : EventSub = None
+        self.__event_sub: EventSub = None
         self.__thread = None
 
         if subscriptions:
@@ -338,11 +338,12 @@ class ChatBot:
                 break
 
             except Exception as e:
-                retry_count += 1
                 logger.error(f"EventSub server error: {e}")
+
+            finally:
+                retry_count += 1
                 logger.info(f"Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
-                retry_delay = min(retry_delay)  # 30 seconds
 
     def stop_event_server(self) -> None:
         """
@@ -450,7 +451,7 @@ class ChatBot:
             logger.error(f"Failed to get connected users: {e}")
             raise TwitchEndpointError(f"Failed to retrieve connected users: {e}")
 
-    def create_clips(self, has_delay:bool=False) -> str:
+    def create_clips(self, has_delay: bool = False) -> str:
         """
         Create a editable clips (30s before the moment the clip is asked)
         :param has_delay: the end clip is delayed
@@ -458,8 +459,8 @@ class ChatBot:
         """
         try:
             data = {
-                "broadcaster_id" : self._channel_id,
-                "has_delay":has_delay
+                "broadcaster_id": self._channel_id,
+                "has_delay": has_delay
             }
             response = self.__auth.post_request(TwitchEndpoint.CLIPS, data=data)
 
@@ -471,7 +472,6 @@ class ChatBot:
         except Exception as e:
             logger.error(f"Failed to clip: {e}")
             raise TwitchEndpointError(f"Failed to clip: {e}")
-
 
     def __browse_all(self, callback, endpoint: str) -> List[Dict[str, Any]]:
         """
