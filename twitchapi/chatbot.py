@@ -466,7 +466,7 @@ class ChatBot:
 
             data = response.get("data", [])
             if data:
-                return data["edit_url"]
+                return data[0]["edit_url"].removesuffix("/edit")
             else:
                 raise TwitchEndpointError("No data retrieve!")
         except Exception as e:
