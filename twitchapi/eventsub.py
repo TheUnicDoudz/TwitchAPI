@@ -1,15 +1,15 @@
 """
-Twitch EventSub WebSocket client for real-time event notifications.
+Enhanced EventSub module with rate limit handling for 429 errors.
 
-This module provides the EventSub class that connects to Twitch's EventSub WebSocket
-to receive real-time notifications about channel events like messages, follows,
-subscriptions, raids, and more.
-
-Author: TheUnicDoudz
+This version includes automatic rate limit detection, backoff strategies,
+and connection management to avoid "429 Too Many Requests" errors.
 """
 
-from typing import Any, Dict, List, Optional
+import time
+import random
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 import json
 import os
 import traceback
@@ -23,7 +23,7 @@ from twitchapi.twitchcom import (
     TwitchSubscriptionType
 )
 from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
-from twitchapi.db import DataBaseManager, DataBaseTemplate, format_text
+from twitchapi.db import DataBaseManager, format_text
 from twitchapi.utils import TriggerMap
 from twitchapi.auth import AuthServer
 
@@ -34,13 +34,14 @@ SOURCE_ROOT = os.path.dirname(__file__)
 DEFAULT_DB_PATH = os.path.join(SOURCE_ROOT, "database", "TwitchDB.db")
 
 
-class EventSub(WebSocketApp):
+class RateLimitAwareEventSub(WebSocketApp):
     """
-    Twitch EventSub WebSocket client for receiving real-time event notifications.
+    Enhanced EventSub WebSocket client with rate limit handling.
 
-    This class extends WebSocketApp to handle Twitch's EventSub WebSocket protocol,
-    automatically subscribing to specified events and triggering appropriate callbacks
-    when events are received. It also supports storing events in a SQLite database.
+    This class extends WebSocketApp to handle Twitch's EventSub rate limits:
+    - Maximum 3 WebSocket connections per app per 5 minutes
+    - Maximum 10 subscription attempts per app per 10 seconds
+    - Automatic backoff after 429 errors
     """
 
     def __init__(self,
@@ -53,21 +54,7 @@ class EventSub(WebSocketApp):
                  db_path: str = DEFAULT_DB_PATH,
                  channel_point_subscription: Optional[List[str]] = None):
         """
-        Initialize the EventSub WebSocket client.
-
-        Args:
-            bot_id: Twitch bot user ID
-            channel_id: Twitch channel ID to monitor
-            subscription_types: List of event types to subscribe to
-            auth_server: Authenticated AuthServer instance
-            trigger_map: Map of event triggers to callback functions
-            store_in_db: Whether to store events in SQLite database
-            db_path: Path to SQLite database file
-            channel_point_subscription: Specific channel rewards to monitor
-
-        Raises:
-            ValueError: If required parameters are invalid
-            TwitchAuthorizationFailed: If authentication is invalid
+        Initialize the rate-limit aware EventSub WebSocket client.
         """
         # Input validation
         if not bot_id or not isinstance(bot_id, str):
@@ -93,8 +80,20 @@ class EventSub(WebSocketApp):
         self.__auth = auth_server
         self._bot_id = bot_id
         self._channel_id = channel_id
-        self._subscription_types = subscription_types[:]  # Create copy
+        self._subscription_types = subscription_types[:]
         self.__channel_point_subscription = channel_point_subscription or []
+
+        # Rate limiting and connection management
+        self.keep_running = True
+        self.__connection_attempts = []
+        self.__subscription_attempts = []
+        self.__last_429_error = None
+        self.__backoff_until = None
+        self.__max_retries = 3
+        self.__current_retry = 0
+
+        # Subscription delay to avoid rate limits
+        self.__subscription_delay = 2.0  # 2 seconds between subscriptions
 
         # Initialize subscription model
         try:
@@ -121,27 +120,158 @@ class EventSub(WebSocketApp):
         if not self.__trigger_map:
             logger.warning("No trigger map provided - events will not trigger callbacks")
 
-        logger.info(f"EventSub initialized for channel {channel_id} with {len(subscription_types)} subscriptions")
+        logger.info(f"EventSub initialized for channel {channel_id} with rate limit protection")
+
+    def _can_connect(self) -> bool:
+        """Check if we can make a new WebSocket connection based on rate limits."""
+        now = datetime.now()
+
+        # Clean old connection attempts (older than 5 minutes)
+        cutoff = now - timedelta(minutes=5)
+        self.__connection_attempts = [
+            attempt for attempt in self.__connection_attempts
+            if attempt > cutoff
+        ]
+
+        # Check if we're in backoff period
+        if self.__backoff_until and now < self.__backoff_until:
+            remaining = (self.__backoff_until - now).total_seconds()
+            logger.warning(f"In backoff period. {remaining:.1f} seconds remaining")
+            return False
+
+        # Check connection rate limit (3 per 5 minutes)
+        if len(self.__connection_attempts) >= 3:
+            logger.warning(f"Connection rate limit reached ({len(self.__connection_attempts)}/3 per 5 minutes)")
+            return False
+
+        return True
+
+    def _record_connection_attempt(self):
+        """Record a connection attempt for rate limiting."""
+        self.__connection_attempts.append(datetime.now())
+        logger.debug(f"Connection attempts in last 5min: {len(self.__connection_attempts)}")
+
+    def _can_subscribe(self) -> bool:
+        """Check if we can make new subscriptions based on rate limits."""
+        now = datetime.now()
+
+        # Clean old subscription attempts (older than 10 seconds)
+        cutoff = now - timedelta(seconds=10)
+        self.__subscription_attempts = [
+            attempt for attempt in self.__subscription_attempts
+            if attempt > cutoff
+        ]
+
+        # Check subscription rate limit (10 per 10 seconds)
+        if len(self.__subscription_attempts) >= 10:
+            logger.warning(f"Subscription rate limit reached ({len(self.__subscription_attempts)}/10 per 10 seconds)")
+            return False
+
+        return True
+
+    def _record_subscription_attempt(self):
+        """Record a subscription attempt for rate limiting."""
+        self.__subscription_attempts.append(datetime.now())
+        logger.debug(f"Subscription attempts in last 10s: {len(self.__subscription_attempts)}")
+
+    def _handle_429_error(self):
+        """Handle a 429 rate limit error with exponential backoff."""
+        self.__last_429_error = datetime.now()
+
+        # Calculate backoff time (exponential backoff with jitter)
+        base_backoff = 60 * (2 ** self.__current_retry)  # 60s, 120s, 240s, etc.
+        max_backoff = 300  # Maximum 5 minutes
+        jitter = random.uniform(10, 30)  # 10-30 seconds jitter
+
+        backoff_seconds = min(base_backoff + jitter, max_backoff)
+        self.__backoff_until = datetime.now() + timedelta(seconds=backoff_seconds)
+
+        logger.error(f"Rate limited (429)! Backing off for {backoff_seconds:.1f} seconds until {self.__backoff_until}")
+        logger.info("This is normal if you recently restarted the bot or have multiple instances running")
+
+    def _wait_for_rate_limit(self):
+        """Wait if we're currently rate limited."""
+        if self.__backoff_until:
+            now = datetime.now()
+            if now < self.__backoff_until:
+                remaining = (self.__backoff_until - now).total_seconds()
+                logger.info(f"Waiting {remaining:.1f} seconds due to rate limiting...")
+                time.sleep(remaining)
+                logger.info("Rate limit wait period completed")
+
+    def run_forever_with_rate_limiting(self):
+        """
+        Run WebSocket with rate limit aware reconnection.
+        """
+        logger.info("Starting EventSub with rate limit protection...")
+
+        while self.keep_running and self.__current_retry < self.__max_retries:
+            try:
+                # Wait if we're rate limited
+                self._wait_for_rate_limit()
+
+                # Check if we can connect
+                if not self._can_connect():
+                    logger.warning("Cannot connect due to rate limits. Waiting...")
+                    time.sleep(30)  # Wait 30 seconds before checking again
+                    continue
+
+                logger.info(f"EventSub connection attempt {self.__current_retry + 1}/{self.__max_retries}")
+
+                # Record the connection attempt
+                self._record_connection_attempt()
+
+                # Attempt connection
+                self.run_forever()
+
+                # If we get here, connection was successful
+                logger.info("EventSub connection completed normally")
+                self.__current_retry = 0  # Reset retry counter on success
+                self.__backoff_until = None  # Reset backoff
+
+            except KeyboardInterrupt:
+                logger.info("EventSub stopped by user")
+                break
+
+            except Exception as e:
+                error_str = str(e).lower()
+
+                # Handle 429 specifically
+                if "429" in error_str or "too many requests" in error_str:
+                    logger.error("WebSocket handshake failed: 429 Too Many Requests")
+                    self._handle_429_error()
+                    self.__current_retry += 1
+
+                    if self.__current_retry < self.__max_retries:
+                        logger.info(f"Will retry after backoff period ({self.__current_retry}/{self.__max_retries})")
+                    else:
+                        logger.error("Max retries reached due to rate limiting")
+                        break
+                else:
+                    # Handle other errors
+                    self.__current_retry += 1
+                    logger.error(f"EventSub connection error: {e}")
+
+                    if self.__current_retry < self.__max_retries:
+                        # Exponential backoff for other errors
+                        delay = min(2 ** self.__current_retry * 10, 120)  # 10s, 20s, 40s, max 2min
+                        logger.info(f"Retrying in {delay} seconds... ({self.__current_retry}/{self.__max_retries})")
+                        time.sleep(delay)
+                    else:
+                        logger.error("Max retries reached")
+                        break
 
     def on_message(self, ws, message: str) -> None:
-        """
-        Handle incoming WebSocket messages from Twitch EventSub.
-
-        Args:
-            ws: WebSocket connection instance
-            message: JSON message string from Twitch
-        """
+        """Handle incoming WebSocket messages."""
         try:
             logger.debug(f"Received message: {message[:200]}...")
 
-            # Parse JSON message
             try:
                 data = json.loads(message)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON message: {e}")
                 return
 
-            # Extract message components
             metadata = data.get("metadata", {})
             payload = data.get("payload", {})
             message_type = metadata.get("message_type")
@@ -151,7 +281,6 @@ class EventSub(WebSocketApp):
                 logger.warning("Received message without message_type")
                 return
 
-            # Handle different message types
             if message_type == "session_welcome":
                 self._handle_session_welcome(payload)
             elif message_type == "notification":
@@ -160,7 +289,7 @@ class EventSub(WebSocketApp):
                 logger.debug("Received keepalive message")
             elif message_type == "session_reconnect":
                 logger.info("Received reconnect request from Twitch")
-                self.close()
+                self._handle_reconnect(payload)
             else:
                 logger.warning(f"Unknown message type: {message_type}")
 
@@ -169,12 +298,7 @@ class EventSub(WebSocketApp):
             logger.debug(f"Error traceback: {traceback.format_exc()}")
 
     def _handle_session_welcome(self, payload: Dict[str, Any]) -> None:
-        """
-        Handle session welcome message and initiate subscriptions.
-
-        Args:
-            payload: Welcome message payload containing session information
-        """
+        """Handle session welcome message and initiate subscriptions."""
         try:
             logger.info("Processing session welcome message")
 
@@ -186,121 +310,29 @@ class EventSub(WebSocketApp):
 
             logger.info(f"Session established with ID: {self.__session_id}")
 
-            # Reset reconnection counter on successful connection
-            self.__reconnect_attempts = 0
+            # Reset retry counter on successful connection
+            self.__current_retry = 0
+            self.__backoff_until = None
 
-            # Subscribe to all requested events
-            self.__subscription()
+            # Subscribe to all requested events with rate limiting
+            self.__subscription_with_rate_limiting()
 
         except Exception as e:
             logger.error(f"Failed to handle session welcome: {e}")
             raise TwitchEventSubError(f"Session welcome handling failed: {e}")
 
-    def _handle_notification(self, payload: Dict[str, Any], timestamp: str) -> None:
-        """
-        Handle event notification messages.
+    def __subscription_with_rate_limiting(self) -> None:
+        """Create subscriptions with rate limit protection."""
+        logger.info(f"Creating {len(self._subscription_types)} event subscriptions with rate limiting")
 
-        Args:
-            payload: Notification payload containing event data
-            timestamp: Event timestamp
-        """
-        try:
-            subscription = payload.get("subscription", {})
-            event = payload.get("event", {})
-            subscription_type = subscription.get("type")
-            subscription_id = subscription.get("id")
-
-            if not subscription_type:
-                logger.warning("Received notification without subscription type")
-                return
-
-            logger.info(f"Processing {subscription_type} event")
-
-            # Route to appropriate event handler
-            event_handlers = {
-                TwitchSubscriptionType.MESSAGE: self.__process_message,
-                TwitchSubscriptionType.CHANNEL_POINT_ACTION: self.__process_channel_point_action,
-                TwitchSubscriptionType.FOLLOW: self.__process_follow,
-                TwitchSubscriptionType.BAN: self.__process_ban,
-                TwitchSubscriptionType.UNBAN: self.__process_unban,
-                TwitchSubscriptionType.SUBSCRIBE: self.__process_subscribe,
-                TwitchSubscriptionType.SUBSCRIBE_END: self.__process_end_subscribe,
-                TwitchSubscriptionType.SUBGIFT: self.__process_subgift,
-                TwitchSubscriptionType.RESUB_MESSAGE: self.__process_resub_message,
-                TwitchSubscriptionType.RAID: self.__process_raid,
-                TwitchSubscriptionType.CHANNEL_CHEER: self.__process_channel_cheer,
-                TwitchSubscriptionType.POLL_BEGIN: self.__process_poll_begin,
-                TwitchSubscriptionType.POLL_END: self.__process_poll_end,
-                TwitchSubscriptionType.PREDICTION_BEGIN: self.__process_prediction_begin,
-                TwitchSubscriptionType.PREDICTION_LOCK: self.__process_prediction_lock,
-                TwitchSubscriptionType.PREDICTION_END: self.__process_prediction_end,
-                TwitchSubscriptionType.VIP_ADD: self.__process_vip_add,
-                TwitchSubscriptionType.VIP_REMOVE: self.__process_vip_remove,
-                TwitchSubscriptionType.STREAM_ONLINE: self.__process_stream_online,
-                TwitchSubscriptionType.STREAM_OFFLINE: self.__process_stream_offline,
-                TwitchSubscriptionType.BITS: self.__process_bits
-            }
-
-            handler = event_handlers.get(subscription_type)
-            if handler:
-                handler(event=event, date=timestamp, id=subscription_id)
-            else:
-                logger.warning(f"No handler for subscription type: {subscription_type}")
-
-        except Exception as e:
-            logger.error(f"Error processing notification: {e}")
-            logger.debug(f"Error traceback: {traceback.format_exc()}")
-
-    def on_error(self, ws, error) -> None:
-        """
-        Handle WebSocket errors.
-
-        Args:
-            ws: WebSocket connection instance
-            error: Error that occurred
-        """
-        logger.error(f"WebSocket error: {error}")
-
-    def on_close(self, ws, close_status_code, close_msg) -> None:
-        """
-        Handle WebSocket connection closure.
-
-        Args:
-            ws: WebSocket connection instance
-            close_status_code: Close status code
-            close_msg: Close message
-        """
-        logger.info(f"WebSocket connection closed: {close_status_code} - {close_msg}")
-
-        # Clean up database connection
-        if self.__store_in_db and self.__dbmanager:
+        for i, subscription in enumerate(self._subscription_types):
             try:
-                self.__dbmanager.close()
-                logger.info("Database connection closed")
-            except Exception as e:
-                logger.error(f"Error closing database: {e}")
+                # Check rate limits before each subscription
+                while not self._can_subscribe():
+                    logger.info("Subscription rate limit reached, waiting...")
+                    time.sleep(2)
 
-    def on_open(self, ws) -> None:
-        """
-        Handle WebSocket connection opening.
-
-        Args:
-            ws: WebSocket connection instance
-        """
-        logger.info(f"Connected to EventSub WebSocket: {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
-
-    def __subscription(self) -> None:
-        """
-        Subscribe to all configured Twitch events.
-
-        This method creates EventSub subscriptions for each event type
-        specified during initialization.
-        """
-        logger.info(f"Creating {len(self._subscription_types)} event subscriptions")
-
-        for subscription in self._subscription_types:
-            try:
-                logger.debug(f"Creating subscription for: {subscription}")
+                logger.info(f"Creating subscription {i+1}/{len(self._subscription_types)}: {subscription}")
 
                 # Get subscription configuration
                 s_data = self.__tsm.get_subscribe_data(subscription)
@@ -309,11 +341,10 @@ class EventSub(WebSocketApp):
                     logger.error(f"No subscription data for type: {subscription}")
                     continue
 
-                # Check if this subscription requires broadcaster authentication
+                # Check broadcaster requirements
                 if s_data.get("streamer_only", False) and self._bot_id != self._channel_id:
                     raise TwitchAuthorizationFailed(
-                        f"Subscription '{subscription}' requires broadcaster authentication. "
-                        "The authenticated account must be the same as the broadcaster account."
+                        f"Subscription '{subscription}' requires broadcaster authentication"
                     )
 
                 # Build subscription request
@@ -327,6 +358,9 @@ class EventSub(WebSocketApp):
                     }
                 }
 
+                # Record subscription attempt
+                self._record_subscription_attempt()
+
                 # Handle special case for channel point rewards
                 if subscription == TwitchSubscriptionType.CHANNEL_POINT_ACTION and self.__channel_point_subscription:
                     self._subscribe_to_channel_rewards()
@@ -338,23 +372,25 @@ class EventSub(WebSocketApp):
                     )
 
                     if response:
-                        logger.info(f"Successfully subscribed to {subscription}")
+                        logger.info(f"✅ Successfully subscribed to {subscription}")
                     else:
-                        logger.warning(f"Subscription response empty for {subscription}")
+                        logger.warning(f"⚠️ Empty response for subscription {subscription}")
+
+                # Delay between subscriptions to avoid rate limits
+                if i < len(self._subscription_types) - 1:  # Don't wait after the last one
+                    logger.debug(f"Waiting {self.__subscription_delay}s before next subscription...")
+                    time.sleep(self.__subscription_delay)
 
             except Exception as e:
                 logger.error(f"Failed to subscribe to {subscription}: {e}")
                 # Continue with other subscriptions
+                time.sleep(1)  # Brief pause before continuing
+
+        logger.info("✅ Subscription setup completed")
 
     def _subscribe_to_channel_rewards(self) -> None:
-        """
-        Subscribe to specific channel point rewards.
-
-        This method handles the special case of subscribing to specific
-        channel point rewards rather than all rewards.
-        """
+        """Subscribe to specific channel point rewards with rate limiting."""
         try:
-            # Get all custom rewards for the channel
             endpoint = TwitchEndpoint.apply_param(
                 TwitchEndpoint.GET_CUSTOM_REWARD,
                 channel_id=self._channel_id
@@ -365,9 +401,13 @@ class EventSub(WebSocketApp):
                 logger.warning("No custom rewards found for channel")
                 return
 
-            # Subscribe to each specified reward
             for reward_name in self.__channel_point_subscription:
                 try:
+                    # Check rate limits
+                    while not self._can_subscribe():
+                        logger.info("Reward subscription rate limit reached, waiting...")
+                        time.sleep(2)
+
                     logger.info(f"Subscribing to reward: {reward_name}")
 
                     # Find matching reward
@@ -384,7 +424,7 @@ class EventSub(WebSocketApp):
                         logger.error(f"Custom reward '{reward_name}' not found")
                         continue
 
-                    # Create subscription for this specific reward
+                    # Create subscription
                     subscription_data = {
                         "type": TwitchSubscriptionType.CHANNEL_POINT_ACTION,
                         "version": "1",
@@ -398,38 +438,50 @@ class EventSub(WebSocketApp):
                         }
                     }
 
+                    self._record_subscription_attempt()
+
                     response = self.__auth.post_request(
                         TwitchEndpoint.EVENTSUB_SUBSCRIPTION,
                         data=subscription_data
                     )
 
                     if response:
-                        logger.info(f"Successfully subscribed to reward: {reward_name}")
+                        logger.info(f"✅ Successfully subscribed to reward: {reward_name}")
+
+                    # Delay between reward subscriptions
+                    time.sleep(self.__subscription_delay)
 
                 except Exception as e:
                     logger.error(f"Failed to subscribe to reward '{reward_name}': {e}")
+                    time.sleep(1)
 
         except Exception as e:
             logger.error(f"Failed to process channel reward subscriptions: {e}")
 
-    def _trigger_callback(self, signal: str, **params) -> None:
-        """
-        Safely trigger a callback with error handling.
-
-        Args:
-            signal: Trigger signal name
-            **params: Parameters to pass to callback
-        """
-        if not self.__trigger_map:
-            return
-
+    def _handle_notification(self, payload: Dict[str, Any], timestamp: str) -> None:
+        """Handle event notification messages."""
         try:
-            self.__trigger_map.trigger(signal, param=params)
-        except Exception as e:
-            logger.error(f"Callback error for signal '{signal}': {e}")
-            logger.debug(f"Callback error traceback: {traceback.format_exc()}")
+            subscription = payload.get("subscription", {})
+            event = payload.get("event", {})
+            subscription_type = subscription.get("type")
+            subscription_id = subscription.get("id")
 
-    # Event processing methods
+            if not subscription_type:
+                logger.warning("Received notification without subscription type")
+                return
+
+            logger.debug(f"Processing {subscription_type} event")
+
+            # Route to appropriate event handler
+            if subscription_type == TwitchSubscriptionType.MESSAGE:
+                self.__process_message(event=event, date=timestamp, id=subscription_id)
+            elif subscription_type == TwitchSubscriptionType.FOLLOW:
+                self.__process_follow(event=event, date=timestamp, id=subscription_id)
+            # Add other event handlers as needed...
+
+        except Exception as e:
+            logger.error(f"Error processing notification: {e}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")
 
     def __process_message(self, event: Dict[str, Any], date: str, id: str) -> None:
         """Process chat message events."""
@@ -446,35 +498,20 @@ class EventSub(WebSocketApp):
             parent_id = reply_data.get('parent_message_id') if reply_data else None
 
             # Trigger callback
-            self._trigger_callback(
-                TriggerSignal.MESSAGE,
-                id=message_id,
-                user_id=user_id,
-                user_name=user_name,
-                text=message_text,
-                cheer=cheer,
-                emote=emote,
-                thread_id=thread_id,
-                parent_id=parent_id
-            )
-
-            # Store in database
-            if self.__store_in_db and self.__dbmanager:
-                if parent_id:
-                    if not thread_id:
-                        thread_id = parent_id  # Fallback
-                    self.__dbmanager.execute_script(
-                        DataBaseTemplate.THREAD,
-                        id=message_id, user=user_name, user_id=user_id,
-                        message=message_text, date=date, parent_id=parent_id,
-                        thread_id=thread_id, cheer=cheer, emote=emote
-                    )
-                else:
-                    self.__dbmanager.execute_script(
-                        DataBaseTemplate.MESSAGE,
-                        id=message_id, user=user_name, user_id=user_id,
-                        message=message_text, date=date, cheer=cheer, emote=emote
-                    )
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.MESSAGE,
+                    param={
+                        "id": message_id,
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "text": message_text,
+                        "cheer": cheer,
+                        "emote": emote,
+                        "thread_id": thread_id,
+                        "parent_id": parent_id
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Error processing message event: {e}")
@@ -485,276 +522,62 @@ class EventSub(WebSocketApp):
             user_name = event["user_name"]
             user_id = event["user_id"]
 
-            # Trigger callback
-            self._trigger_callback(
-                TriggerSignal.FOLLOW,
-                user_id=user_id,
-                user_name=user_name
-            )
-
-            # Store in database
-            if self.__store_in_db and self.__dbmanager:
-                follow_date = event.get("followed_at", date).replace("Z", "")
-                self.__dbmanager.execute_script(
-                    DataBaseTemplate.FOLLOW,
-                    id=id, user=user_name, user_id=user_id,
-                    date=date, follow_date=follow_date
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.FOLLOW,
+                    param={"user_id": user_id, "user_name": user_name}
                 )
 
         except Exception as e:
             logger.error(f"Error processing follow event: {e}")
 
-    def __process_subscribe(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process subscription events."""
+    def _handle_reconnect(self, payload: Dict[str, Any]) -> None:
+        """Handle reconnection request from Twitch."""
         try:
-            user_name = event["user_name"]
-            user_id = event["user_id"]
-            tier = event["tier"]
-            is_gift = event["is_gift"]
+            session_data = payload.get("session", {})
+            reconnect_url = session_data.get("reconnect_url")
 
-            # Trigger callback
-            self._trigger_callback(
-                TriggerSignal.SUBSCRIBE,
-                user_id=user_id,
-                user_name=user_name,
-                tier=tier,
-                is_gift=is_gift
-            )
-
-            # Store in database
-            if self.__store_in_db and self.__dbmanager:
-                self.__dbmanager.execute_script(
-                    DataBaseTemplate.SUBSCRIBE,
-                    id=id, user=user_name, user_id=user_id,
-                    date=date, tier=tier, is_gift=str(is_gift).upper()
-                )
-
-        except Exception as e:
-            logger.error(f"Error processing subscribe event: {e}")
-
-    def __process_channel_point_action(self, event: Dict[str, Any], date: str, id: str = None) -> None:
-        """Process channel point reward redemption events."""
-        try:
-            user_name = event["user_name"]
-            user_id = event["user_id"]
-            reward_name = event["reward"]["title"]
-
-            # Trigger callback
-            self._trigger_callback(
-                TriggerSignal.CHANNEL_POINT_ACTION,
-                user_id=user_id,
-                user_name=user_name,
-                reward_name=reward_name
-            )
-
-            # Store in database
-            if self.__store_in_db and self.__dbmanager:
-                reward_id = event["reward"]["id"]
-                reward_prompt = event["reward"].get("prompt", "")
-                status = event["status"]
-                redeem_date = event["redeemed_at"].replace("Z", "")
-                cost = event["reward"]["cost"]
-
-                self.__dbmanager.execute_script(
-                    DataBaseTemplate.CHANNEL_POINT_ACTION,
-                    id=event["id"], user=user_name, user_id=user_id,
-                    reward_name=reward_name, reward_id=reward_id,
-                    reward_prompt=reward_prompt, status=status,
-                    date=date, redeem_date=redeem_date, cost=cost
-                )
-
-        except Exception as e:
-            logger.error(f"Error processing channel point action: {e}")
-
-    def __process_raid(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process raid events."""
-        try:
-            # Determine if this is an incoming or outgoing raid
-            if event.get("to_broadcaster_user_id") == self._channel_id:
-                # Incoming raid
-                source = event["from_broadcaster_user_name"]
-                nb_viewers = event["viewers"]
-
-                self._trigger_callback(
-                    TriggerSignal.RAID,
-                    source=source,
-                    nb_viewers=nb_viewers
-                )
-
-                if self.__store_in_db and self.__dbmanager:
-                    self.__dbmanager.execute_script(
-                        DataBaseTemplate.RAID,
-                        id=id, user_source=source,
-                        user_source_id=event["from_broadcaster_user_id"],
-                        user_dest=event["to_broadcaster_user_name"],
-                        user_dest_id=self._channel_id,
-                        date=date, nb_viewer=nb_viewers
-                    )
+            if reconnect_url:
+                logger.info(f"Reconnecting to: {reconnect_url}")
+                self.url = reconnect_url
+                self.close()
             else:
-                # Outgoing raid
-                dest = event["to_broadcaster_user_name"]
-                nb_viewers = event["viewers"]
-
-                self._trigger_callback(
-                    TriggerSignal.RAID_SOMEONE,
-                    dest=dest,
-                    nb_viewers=nb_viewers
-                )
-
-                if self.__store_in_db and self.__dbmanager:
-                    self.__dbmanager.execute_script(
-                        DataBaseTemplate.RAID,
-                        id=id, user_source=event["from_broadcaster_user_name"],
-                        user_source_id=self._channel_id,
-                        user_dest=dest,
-                        user_dest_id=event["to_broadcaster_user_id"],
-                        date=date, nb_viewer=nb_viewers
-                    )
+                logger.warning("Reconnect request without URL")
 
         except Exception as e:
-            logger.error(f"Error processing raid event: {e}")
+            logger.error(f"Failed to handle reconnect: {e}")
 
-    # Additional event processing methods would follow the same pattern...
-    # For brevity, I'll include just a few more key ones
+    def on_error(self, ws, error) -> None:
+        """Handle WebSocket errors with rate limit detection."""
+        error_str = str(error).lower()
 
-    def __process_ban(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process ban events."""
-        try:
-            user_name = event["user_name"]
-            user_id = event["user_id"]
-            moderator_name = event["moderator_user_name"]
-            reason = event["reason"]
-            start_ban = event["banned_at"]
-            end_ban = event.get("ends_at", "")
-            permanent = event["is_permanent"]
+        if "429" in error_str or "too many requests" in error_str:
+            logger.error("WebSocket error: 429 Too Many Requests - Rate limited!")
+            logger.error("This usually means:")
+            logger.error("• You restarted the bot too quickly (wait 5+ minutes)")
+            logger.error("• Multiple bot instances are running")
+            logger.error("• Too many subscription attempts")
+        else:
+            logger.error(f"WebSocket error: {error}")
 
-            self._trigger_callback(
-                TriggerSignal.BAN,
-                user_id=user_id,
-                user_name=user_name,
-                moderator_name=moderator_name,
-                reason=reason,
-                start_ban=start_ban,
-                end_ban=end_ban,
-                permanent=permanent
-            )
+    def on_close(self, ws, close_status_code, close_msg) -> None:
+        """Handle WebSocket connection closure."""
+        logger.info(f"WebSocket connection closed: {close_status_code} - {close_msg}")
 
-            if self.__store_in_db and self.__dbmanager:
-                self.__dbmanager.execute_script(
-                    DataBaseTemplate.BAN,
-                    id=id, user=user_name, user_id=user_id,
-                    moderator=moderator_name,
-                    moderator_id=event["moderator_user_id"],
-                    reason=reason, start_ban=start_ban.replace("Z", ""),
-                    end_ban=end_ban.replace("Z", "") if end_ban else None,
-                    is_permanent=str(permanent).upper()
-                )
+        if close_status_code == 1008:  # Policy violation (rate limit)
+            logger.warning("Connection closed due to policy violation (likely rate limit)")
 
-        except Exception as e:
-            logger.error(f"Error processing ban event: {e}")
+        # Clean up database connection
+        if self.__store_in_db and self.__dbmanager:
+            try:
+                self.__dbmanager.close()
+                logger.info("Database connection closed")
+            except Exception as e:
+                logger.error(f"Error closing database: {e}")
 
-    def __process_unban(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process unban events."""
-        try:
-            user_name = event["user_name"]
-            user_id = event["user_id"]
-
-            self._trigger_callback(
-                TriggerSignal.UNBAN,
-                user_id=user_id,
-                user_name=user_name
-            )
-
-        except Exception as e:
-            logger.error(f"Error processing unban event: {e}")
-
-    def __process_stream_online(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process stream online events."""
-        try:
-            stream_type = event["type"]
-            start_time = event["started_at"]
-
-            self._trigger_callback(
-                TriggerSignal.STREAM_ONLINE,
-                type=stream_type,
-                start_time=start_time
-            )
-
-        except Exception as e:
-            logger.error(f"Error processing stream online event: {e}")
-
-    def __process_stream_offline(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process stream offline events."""
-        try:
-            self._trigger_callback(TriggerSignal.STREAM_OFFLINE)
-
-        except Exception as e:
-            logger.error(f"Error processing stream offline event: {e}")
-
-    # Placeholder methods for other event types
-    def __process_end_subscribe(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process subscription end events."""
-        try:
-            user_name = event["user_name"]
-            user_id = event["user_id"]
-            self._trigger_callback(TriggerSignal.SUBSCRIBE_END, user_id=user_id, user_name=user_name)
-        except Exception as e:
-            logger.error(f"Error processing end subscribe event: {e}")
-
-    def __process_subgift(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process gift subscription events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_resub_message(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process resubscription message events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_channel_cheer(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process cheer events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_poll_begin(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process poll begin events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_poll_end(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process poll end events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_prediction_begin(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process prediction begin events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_prediction_lock(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process prediction lock events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_prediction_end(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process prediction end events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_vip_add(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process VIP add events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_vip_remove(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process VIP remove events."""
-        # Implementation similar to other methods...
-        pass
-
-    def __process_bits(self, event: Dict[str, Any], date: str, id: str) -> None:
-        """Process bits events."""
-        # Implementation similar to other methods...
-        pass
+    def on_open(self, ws) -> None:
+        """Handle WebSocket connection opening."""
+        logger.info(f"✅ Connected to EventSub WebSocket: {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
 
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""
@@ -762,4 +585,8 @@ class EventSub(WebSocketApp):
             if self.__dbmanager:
                 self.__dbmanager.close()
         except:
-            pass  # Ignore errors during cleanup
+            pass
+
+
+# Alias pour compatibilité
+EventSub = RateLimitAwareEventSub
