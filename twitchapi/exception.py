@@ -363,6 +363,9 @@ class KillThreadException(Exception):
         """
         super().__init__(message)
 
+class EventSubReconnectionWarning(Exception):
+    pass
+
 
 # Utility functions for exception handling
 

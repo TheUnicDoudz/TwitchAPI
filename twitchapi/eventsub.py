@@ -25,7 +25,7 @@ from twitchapi.twitchcom import (
     TwitchSubscriptionModel,
     TwitchSubscriptionType
 )
-from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
+from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed, EventSubReconnectionWarning
 from twitchapi.db import DataBaseManager, DataBaseTemplate, format_text
 from twitchapi.utils import TriggerMap
 from twitchapi.auth import AuthServer
@@ -177,7 +177,7 @@ class ProperReconnectEventSub(WebSocketApp):
         with self.__reconnect_lock:
             if self.__reconnect_ws and self.__reconnect_success:
                 # Reconnection is active and successful
-                return ws.sock == self.__reconnect_ws
+                return ws.sock == self.__reconnect_ws.sock
             else:
                 # Primary connection is active
                 return ws.sock == self.sock
@@ -201,7 +201,7 @@ class ProperReconnectEventSub(WebSocketApp):
                     # Subscribe to events on primary connection
                     self.__subscription_with_rate_limiting()
 
-                elif ws.sock == self.__reconnect_ws:
+                elif ws.sock == self.__reconnect_ws.sock:
                     # Welcome on reconnection
                     logger.info(f"Reconnect session established with ID: {session_id}")
 
@@ -221,7 +221,7 @@ class ProperReconnectEventSub(WebSocketApp):
                     self._close_old_connection()
 
                     # Promote reconnection to primary
-                    self.sock = self.__reconnect_ws
+                    self.sock = self.__reconnect_ws.sock
                     self.__reconnect_ws = None
                     self.__is_primary_connection = True
 
@@ -322,7 +322,7 @@ class ProperReconnectEventSub(WebSocketApp):
     def _close_old_connection(self) -> None:
         """Safely close the old WebSocket connection."""
         try:
-            if self.sock and self.sock != self.__reconnect_ws:
+            if self.sock and self.sock != self.__reconnect_ws.sock:
                 logger.info("🔒 Closing old WebSocket connection...")
 
                 # Close the old connection gracefully
@@ -1060,7 +1060,10 @@ class ProperReconnectEventSub(WebSocketApp):
                 self._record_connection_attempt()
 
                 # Start primary connection
-                self.run_forever()
+                if not self.sock:
+                    self.run_forever()
+                else:
+                    raise EventSubReconnectionWarning
 
                 logger.info("EventSub connection completed normally")
                 self.__current_retry = 0

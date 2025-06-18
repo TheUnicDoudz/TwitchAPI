@@ -21,7 +21,8 @@ from twitchapi.exception import (
     TwitchMessageNotSentWarning,
     KillThreadException,
     TwitchAuthorizationFailed,
-    TwitchEndpointError
+    TwitchEndpointError,
+    EventSubReconnectionWarning
 )
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT, ACCESS_TOKEN_FILE
 from twitchapi.utils import ThreadWithExc, TriggerMap
@@ -333,7 +334,7 @@ class ChatBot:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
                 self.__event_sub.run_forever_with_proper_reconnection()
 
-            except KillThreadException:
+            except (KillThreadException, EventSubReconnectionWarning):
                 logger.info("EventSub server stopped by request")
                 break
 
