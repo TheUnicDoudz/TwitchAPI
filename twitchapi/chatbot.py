@@ -328,11 +328,24 @@ class ChatBot:
         """
         retry_delay = 30  # seconds
         retry_count = 0
+        max_total_retries = 10  # Maximum total retry attempts
 
-        while True:
+        while retry_count < max_total_retries:
             try:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
+
+                # Ensure EventSub keep_running is True before starting
+                if self.__event_sub:
+                    self.__event_sub.keep_running = True
+
                 self.__event_sub.run_forever_with_proper_reconnection()
+
+                # If we reach here and keep_running is still True, it means connection issues
+                if self.__event_sub and self.__event_sub.keep_running:
+                    logger.warning("EventSub server stopped unexpectedly, will retry")
+                else:
+                    logger.info("EventSub server stopped by request")
+                    break
 
             except (KillThreadException, EventSubReconnectionWarning):
                 logger.info("EventSub server stopped by request")
@@ -340,11 +353,17 @@ class ChatBot:
 
             except Exception as e:
                 logger.error(f"EventSub server error: {e}")
+                logger.debug(f"Error traceback: {traceback.format_exc()}")
 
-            finally:
-                retry_count += 1
-                logger.info(f"Retrying in {retry_delay} seconds...")
+            retry_count += 1
+
+            if retry_count < max_total_retries:
+                logger.info(f"Retrying in {retry_delay} seconds... (attempt {retry_count + 1}/{max_total_retries})")
                 time.sleep(retry_delay)
+            else:
+                logger.error(f"Maximum retry attempts ({max_total_retries}) reached. Giving up.")
+
+        logger.info("EventSub server thread ending")
 
     def stop_event_server(self) -> None:
         """

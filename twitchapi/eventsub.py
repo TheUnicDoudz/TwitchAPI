@@ -37,7 +37,7 @@ SOURCE_ROOT = os.path.dirname(__file__)
 DEFAULT_DB_PATH = os.path.join(SOURCE_ROOT, "database", "TwitchDB.db")
 
 
-class ProperReconnectEventSub(WebSocketApp):
+class EventSub(WebSocketApp):
     """
     EventSub WebSocket client with proper reconnection handling.
 
@@ -187,6 +187,7 @@ class ProperReconnectEventSub(WebSocketApp):
         try:
             session_data = payload.get("session", {})
             session_id = session_data.get("id")
+            reconect_ws = self.__reconnect_ws
 
             if not session_id:
                 raise TwitchEventSubError("No session ID provided in welcome message")
@@ -213,8 +214,8 @@ class ProperReconnectEventSub(WebSocketApp):
                     self.__reconnect_success = True
 
                     # Subscribe to events on new connection
-                    logger.info("Setting up subscriptions on new connection...")
-                    self.__subscription_with_rate_limiting()
+                    # logger.info("Setting up subscriptions on new connection...")
+                    # self.__subscription_with_rate_limiting()
 
                     # Now we can safely close the old connection
                     logger.info("New connection established successfully, closing old connection...")
@@ -1045,6 +1046,29 @@ class ProperReconnectEventSub(WebSocketApp):
         except Exception as e:
             logger.error(f"Error processing bits event: {e}")
 
+    def run_forever(self, sockopt=None, sslopt=None, ping_interval=0, ping_timeout=None,
+                    http_proxy_host=None, http_proxy_port=None,
+                    http_no_proxy=None, http_proxy_auth=None,
+                    skip_utf8_validation=False,
+                    host=None, origin=None, dispatcher=None,
+                    suppress_origin=False, proxy_type=None):
+        """Override to add logging."""
+        logger.debug(f"Starting WebSocket run_forever (keep_running={self.keep_running})")
+        try:
+            result = super().run_forever(
+                sockopt=sockopt, sslopt=sslopt, ping_interval=ping_interval,
+                ping_timeout=ping_timeout, http_proxy_host=http_proxy_host,
+                http_proxy_port=http_proxy_port, http_no_proxy=http_no_proxy,
+                http_proxy_auth=http_proxy_auth, skip_utf8_validation=skip_utf8_validation,
+                host=host, origin=origin, dispatcher=dispatcher,
+                suppress_origin=suppress_origin, proxy_type=proxy_type
+            )
+            logger.debug(f"WebSocket run_forever ended (keep_running={self.keep_running})")
+            return result
+        except Exception as e:
+            logger.error(f"Exception in run_forever: {e}")
+            raise
+
     def run_forever_with_proper_reconnection(self):
         """Run WebSocket with proper reconnection handling."""
         logger.info("Starting EventSub with proper reconnection handling...")
@@ -1059,54 +1083,102 @@ class ProperReconnectEventSub(WebSocketApp):
                 logger.info(f"EventSub connection attempt {self.__current_retry + 1}/{self.__max_retries}")
                 self._record_connection_attempt()
 
-                # Start primary connection
-                if not self.sock:
-                    self.run_forever()
-                else:
-                    raise EventSubReconnectionWarning
+                # Reset connection state before attempting
+                self._reset_connection_state()
 
-                logger.info("EventSub connection completed normally")
-                self.__current_retry = 0
-                break
+                # Start primary connection
+                self.run_forever()
+
+                # If we reach here, connection ended (normally or with error)
+                logger.info("EventSub connection ended")
+
+                # Check if we should reconnect
+                if not self.keep_running:
+                    logger.info("EventSub stopped by request (keep_running=False)")
+                    break
+
+                # Connection ended but keep_running is still True, so reconnect
+                logger.warning("Connection lost, will attempt to reconnect...")
+                self.__current_retry += 1
 
             except KeyboardInterrupt:
                 logger.info("EventSub stopped by user")
+                self.keep_running = False
                 break
 
             except Exception as e:
                 self.__current_retry += 1
                 logger.error(f"EventSub connection error: {e}")
 
-                if self.__current_retry < self.__max_retries:
+                if self.__current_retry < self.__max_retries and self.keep_running:
                     delay = min(2 ** self.__current_retry * 10, 120)
                     logger.info(f"Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
-                    logger.error("Max retries reached")
+                    logger.error("Max retries reached or stop requested")
                     break
 
-    def on_error(self, ws, error) -> None:
-        """Handle WebSocket errors."""
-        connection_type = "primary" if ws.sock == self.sock else "reconnect"
-        logger.error(f"WebSocket error on {connection_type} connection: {error}")
+        logger.info(
+            f"EventSub reconnection loop ended (keep_running={self.keep_running}, retries={self.__current_retry}/{self.__max_retries})")
 
-    def on_close(self, ws, close_status_code, close_msg) -> None:
+    def _reset_connection_state(self):
+        """Reset connection state before reconnection attempt."""
+        logger.debug("Resetting connection state for reconnection")
+
+        # Reset WebSocket state
+        self.sock = None
+        self.connected = False
+
+        # Reset session ID to force new session
+        self.__session_id = None
+
+        # Reset reconnection state
+        with self.__reconnect_lock:
+            self.__reconnect_url = None
+            self.__reconnect_ws = None
+            self.__reconnect_success = False
+
+        # Clear rate limit tracking for fresh start
+        current_time = datetime.now()
+        if self.__last_429_error and (current_time - self.__last_429_error).total_seconds() > 300:
+            logger.debug("Clearing old rate limit tracking")
+            self.__connection_attempts = []
+            self.__subscription_attempts = []
+            self.__last_429_error = None
+
+    def on_close(self, ws, close_status_code, close_msg):
         """Handle WebSocket connection closure."""
         connection_type = "primary" if ws.sock == self.sock else "reconnect"
         logger.info(f"WebSocket {connection_type} connection closed: {close_status_code} - {close_msg}")
 
-        # Clean up database connection
-        if self.__store_in_db and self.__dbmanager:
+        # Don't set keep_running to False here! Let the retry logic handle it
+        # Only clean up database if we're truly stopping
+        if not self.keep_running and self.__store_in_db and self.__dbmanager:
             try:
                 self.__dbmanager.close()
                 logger.info("Database connection closed")
             except Exception as e:
                 logger.error(f"Error closing database: {e}")
 
+    def on_error(self, ws, error):
+        """Handle WebSocket errors."""
+        connection_type = "primary" if ws.sock == self.sock else "reconnect"
+        logger.error(f"WebSocket error on {connection_type} connection: {error}")
+
+        # Check if this is a connection error that should trigger reconnection
+        if isinstance(error, (ConnectionError, OSError)):
+            logger.warning("Connection error detected, will attempt reconnection")
+            # Don't set keep_running to False here!
+
     def on_open(self, ws) -> None:
         """Handle WebSocket connection opening."""
         connection_type = "primary" if ws.sock == self.sock else "reconnect"
         logger.info(f"✅ {connection_type.title()} WebSocket connected to EventSub")
+
+    @property
+    def is_running(self) -> bool:
+        """Check if EventSub is currently running."""
+        return self.keep_running and self.sock is not None
 
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""
@@ -1117,7 +1189,3 @@ class ProperReconnectEventSub(WebSocketApp):
                 self.__reconnect_ws.close()
         except:
             pass
-
-
-# Alias for compatibility
-EventSub = ProperReconnectEventSub
