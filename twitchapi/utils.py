@@ -17,225 +17,74 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def _async_raise(tid: int, exctype: type) -> None:
-    """
-    Raise an exception in a thread with the given thread ID.
-
-    This function uses the Python C API to asynchronously raise an exception
-    in another thread. This is used for graceful thread termination.
-
-    Args:
-        tid: Thread ID where the exception should be raised
-        exctype: Exception class to raise
-
-    Raises:
-        TypeError: If exctype is not a class
-        ValueError: If thread ID is invalid
-        SystemError: If the operation fails
-
-    Warning:
-        This function uses low-level Python C API and should be used carefully.
-        It may not work in all Python implementations or versions.
-    """
+def _async_raise(tid, exctype):
+    '''Raises an exception in the threads with id tid'''
     if not inspect.isclass(exctype):
-        raise TypeError("Only exception classes can be raised (not instances)")
-
-    try:
-        # Use Python's C API to raise exception in target thread
-        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-            ctypes.c_long(tid),
-            ctypes.py_object(exctype)
-        )
-
-        if res == 0:
-            raise ValueError("Invalid thread ID - thread not found")
-        elif res != 1:
-            # If it returns a number greater than one, we're in trouble
-            # Call it again with exc=NULL to revert the effect
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(tid), None)
-            raise SystemError("PyThreadState_SetAsyncExc failed - multiple threads affected")
-
-        logger.debug(f"Successfully raised {exctype.__name__} in thread {tid}")
-
-    except Exception as e:
-        logger.error(f"Failed to raise exception in thread {tid}: {e}")
-        raise
+        raise TypeError("Only types can be raised (not instances)")
+    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(tid),
+                                                     ctypes.py_object(exctype))
+    if res == 0:
+        raise ValueError("invalid thread id")
+    elif res != 1:
+        # "if it returns a number greater than one, you're in trouble,
+        # and you should call it again with exc=NULL to revert the effect"
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(tid), None)
+        raise SystemError("PyThreadState_SetAsyncExc failed")
 
 
 class ThreadWithExc(threading.Thread):
-    """
-    Enhanced Thread class that supports raising exceptions from another thread.
+    '''A thread class that supports raising an exception in the thread from
+       another thread.
+    '''
 
-    This class extends the standard threading.Thread to provide a mechanism
-    for one thread to raise an exception in another thread's context.
-    This is particularly useful for graceful thread termination.
+    def _get_my_tid(self):
+        """determines this (self's) thread id
 
-    Example:
-        def worker_function():
-            try:
-                while True:
-                    # Do work
-                    time.sleep(1)
-            except CustomException:
-                print("Thread terminated gracefully")
-
-        thread = ThreadWithExc(target=worker_function)
-        thread.start()
-
-        # Later, to stop the thread:
-        thread.raise_exc(CustomException)
-        thread.join()
-    """
-
-    def __init__(self, *args, **kwargs):
+        CAREFUL: this function is executed in the context of the caller
+        thread, to get the identity of the thread represented by this
+        instance.
         """
-        Initialize the enhanced thread.
+        if not self.is_alive():  # Note: self.isAlive() on older version of Python
+            raise threading.ThreadError("the thread is not active")
 
-        Args:
-            *args: Arguments passed to threading.Thread
-            **kwargs: Keyword arguments passed to threading.Thread
+        # do we have it cached?
+        if hasattr(self, "_thread_id"):
+            return self._thread_id
+
+        # no, look for it in the _active dict
+        for tid, tobj in threading._active.items():
+            if tobj is self:
+                self._thread_id = tid
+                return tid
+
+        # TODO: in python 2.6, there's a simpler way to do: self.ident
+
+        raise AssertionError("could not determine the thread's id")
+
+    def raise_exc(self, exctype):
+        """Raises the given exception type in the context of this thread.
+
+        If the thread is busy in a system call (time.sleep(),
+        socket.accept(), ...), the exception is simply ignored.
+
+        If you are sure that your exception should terminate the thread,
+        one way to ensure that it works is:
+
+            t = ThreadWithExc( ... )
+            ...
+            t.raise_exc( SomeException )
+            while t.isAlive():
+                time.sleep( 0.1 )
+                t.raise_exc( SomeException )
+
+        If the exception is to be caught by the thread, you need a way to
+        check that your thread has caught it.
+
+        CAREFUL: this function is executed in the context of the
+        caller thread, to raise an exception in the context of the
+        thread represented by this instance.
         """
-        super().__init__(*args, **kwargs)
-        self._thread_id = None
-        self._exception_raised = False
-        self._lock = threading.Lock()
-
-    def _get_my_tid(self) -> int:
-        """
-        Determine this thread's ID.
-
-        This method finds the thread ID for the current ThreadWithExc instance.
-        It's executed in the context of the caller thread to get the identity
-        of the thread represented by this instance.
-
-        Returns:
-            Thread ID as an integer
-
-        Raises:
-            threading.ThreadError: If thread is not active
-            AssertionError: If thread ID cannot be determined
-        """
-        with self._lock:
-            if not self.is_alive():
-                raise threading.ThreadError("Thread is not active")
-
-            # Return cached thread ID if available
-            if self._thread_id is not None:
-                return self._thread_id
-
-            # Search for thread ID in active threads
-            for tid, tobj in threading._active.items():
-                if tobj is self:
-                    self._thread_id = tid
-                    logger.debug(f"Found thread ID: {tid}")
-                    return tid
-
-            # Fallback: try using ident attribute (Python 2.6+)
-            if hasattr(self, 'ident') and self.ident is not None:
-                self._thread_id = self.ident
-                return self.ident
-
-            raise AssertionError("Could not determine thread ID")
-
-    def raise_exc(self, exctype: type) -> bool:
-        """
-        Raise an exception in this thread's context.
-
-        This method raises the specified exception type in the context of
-        this thread. If the thread is busy in a system call (time.sleep(),
-        socket.accept(), etc.), the exception may be ignored until the
-        system call completes.
-
-        Args:
-            exctype: Exception class to raise in the thread
-
-        Returns:
-            True if exception was successfully raised, False otherwise
-
-        Raises:
-            TypeError: If exctype is not an exception class
-            ValueError: If thread is not active
-
-        Example:
-            class StopThread(Exception):
-                pass
-
-            # To ensure the thread stops:
-            thread.raise_exc(StopThread)
-            while thread.is_alive():
-                time.sleep(0.1)
-                thread.raise_exc(StopThread)
-        """
-        if not inspect.isclass(exctype) or not issubclass(exctype, BaseException):
-            raise TypeError("exctype must be an exception class")
-
-        with self._lock:
-            if self._exception_raised:
-                logger.warning("Exception already raised in this thread")
-                return False
-
-            try:
-                tid = self._get_my_tid()
-                _async_raise(tid, exctype)
-                self._exception_raised = True
-                logger.info(f"Raised {exctype.__name__} in thread {self.name or tid}")
-                return True
-
-            except Exception as e:
-                logger.error(f"Failed to raise exception in thread: {e}")
-                return False
-
-    def is_exception_raised(self) -> bool:
-        """
-        Check if an exception has been raised in this thread.
-
-        Returns:
-            True if an exception has been raised, False otherwise
-        """
-        with self._lock:
-            return self._exception_raised
-
-    def join(self, timeout: Optional[float] = None) -> None:
-        """
-        Wait for the thread to terminate.
-
-        This method extends the standard join() to provide better logging
-        and timeout handling.
-
-        Args:
-            timeout: Maximum time to wait in seconds (None = wait forever)
-        """
-        try:
-            super().join(timeout)
-
-            if self.is_alive():
-                logger.warning(f"Thread {self.name or self.ident} did not terminate within timeout")
-            else:
-                logger.debug(f"Thread {self.name or self.ident} terminated successfully")
-
-        except Exception as e:
-            logger.error(f"Error joining thread: {e}")
-
-    def run(self) -> None:
-        """
-        Thread execution method with enhanced error handling.
-
-        This method wraps the standard run() method to provide better
-        error logging and cleanup.
-        """
-        try:
-            logger.debug(f"Starting thread: {self.name or self.ident}")
-            super().run()
-            logger.debug(f"Thread completed: {self.name or self.ident}")
-
-        except Exception as e:
-            logger.error(f"Thread {self.name or self.ident} crashed: {e}")
-            raise
-        finally:
-            # Reset exception flag when thread ends
-            with self._lock:
-                self._exception_raised = False
-
+        _async_raise(self._get_my_tid(), exctype)
 
 class TriggerMap:
     """
