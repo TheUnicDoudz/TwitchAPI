@@ -25,7 +25,7 @@ from twitchapi.twitchcom import (
     TwitchSubscriptionModel,
     TwitchSubscriptionType
 )
-from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed, EventSubReconnectionWarning
+from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
 from twitchapi.db import DataBaseManager, DataBaseTemplate, format_text
 from twitchapi.utils import TriggerMap
 from twitchapi.auth import AuthServer
@@ -94,6 +94,7 @@ class EventSub(WebSocketApp):
         self.__reconnect_thread = None
         self.__reconnect_success = False
         self.__reconnect_lock = threading.Lock()
+        self.__on_reconnection = False
 
         # Connection state
         self.keep_running = True
@@ -187,13 +188,12 @@ class EventSub(WebSocketApp):
         try:
             session_data = payload.get("session", {})
             session_id = session_data.get("id")
-            reconect_ws = self.__reconnect_ws
 
             if not session_id:
                 raise TwitchEventSubError("No session ID provided in welcome message")
 
             with self.__reconnect_lock:
-                if ws.sock == self.sock:
+                if ws.sock == self.sock and not self.__on_reconnection:
                     # Welcome on primary connection
                     logger.info(f"Primary session established with ID: {session_id}")
                     self.__session_id = session_id
@@ -225,6 +225,7 @@ class EventSub(WebSocketApp):
                     self.sock = self.__reconnect_ws.sock
                     self.__reconnect_ws = None
                     self.__is_primary_connection = True
+                    self.__on_reconnection = False
 
                     logger.info(
                         f"Reconnection completed successfully! Old session: {old_session_id}, New session: {session_id}")
@@ -296,6 +297,7 @@ class EventSub(WebSocketApp):
             # Start the new connection
             logger.info("📡 Starting reconnection WebSocket...")
             self.__reconnect_ws.run_forever()
+            logger.info("Reconnect server ended!")
 
         except Exception as e:
             logger.error(f"Failed to establish reconnection: {e}")
@@ -306,6 +308,7 @@ class EventSub(WebSocketApp):
     def _on_reconnect_open(self, ws) -> None:
         """Handle reconnection WebSocket opening."""
         logger.info("✅ Reconnection WebSocket opened, waiting for welcome message...")
+        self.__on_reconnection = True
 
     def _on_reconnect_close(self, ws, close_status_code, close_msg) -> None:
         """Handle reconnection WebSocket closure."""
@@ -329,6 +332,7 @@ class EventSub(WebSocketApp):
                 # Close the old connection gracefully
                 old_sock = self.sock
                 self.sock = None  # Prevent interference
+
 
                 if hasattr(old_sock, 'close'):
                     old_sock.close()
