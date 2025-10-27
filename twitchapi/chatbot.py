@@ -10,6 +10,7 @@ Author: TheUnicDoudz
 import logging
 import time
 from typing import List, Optional, Dict, Any
+import traceback
 
 from twitchapi.twitchcom import (
     TwitchEndpoint,
@@ -22,7 +23,6 @@ from twitchapi.exception import (
     KillThreadException,
     TwitchAuthorizationFailed,
     TwitchEndpointError,
-    EventSubReconnectionWarning
 )
 from twitchapi.auth import AuthServer, REDIRECT_URI_AUTH, DEFAULT_TIMEOUT, ACCESS_TOKEN_FILE
 from twitchapi.utils import ThreadWithExc, TriggerMap
@@ -347,7 +347,7 @@ class ChatBot:
                     logger.info("EventSub server stopped by request")
                     break
 
-            except (KillThreadException, EventSubReconnectionWarning):
+            except (KillThreadException):
                 logger.info("EventSub server stopped by request")
                 break
 
