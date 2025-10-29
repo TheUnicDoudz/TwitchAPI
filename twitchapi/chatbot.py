@@ -328,9 +328,8 @@ class ChatBot:
         """
         retry_delay = 30  # seconds
         retry_count = 0
-        max_total_retries = 10  # Maximum total retry attempts
 
-        while retry_count < max_total_retries:
+        while True:
             try:
                 logger.info(f"Starting EventSub server (attempt {retry_count + 1})")
 
@@ -347,7 +346,7 @@ class ChatBot:
                     logger.info("EventSub server stopped by request")
                     break
 
-            except (KillThreadException):
+            except KillThreadException:
                 logger.info("EventSub server stopped by request")
                 break
 
@@ -357,11 +356,8 @@ class ChatBot:
 
             retry_count += 1
 
-            if retry_count < max_total_retries:
-                logger.info(f"Retrying in {retry_delay} seconds... (attempt {retry_count + 1}/{max_total_retries})")
-                time.sleep(retry_delay)
-            else:
-                logger.error(f"Maximum retry attempts ({max_total_retries}) reached. Giving up.")
+            logger.info(f"Retrying in {retry_delay} seconds... (attempt {retry_count})")
+            time.sleep(retry_delay)
 
         logger.info("EventSub server thread ending")
 

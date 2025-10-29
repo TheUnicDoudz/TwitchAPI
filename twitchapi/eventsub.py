@@ -164,8 +164,6 @@ class EventSub(WebSocketApp):
                     logger.debug("Ignoring notification on inactive connection")
             elif message_type == "session_keepalive":
                 logger.debug(f"Keepalive on {'primary' if ws.sock == self.sock else 'reconnect'} connection")
-            elif message_type == "session_reconnect":
-                self._handle_reconnect_request(payload)
             else:
                 logger.warning(f"Unknown message type: {message_type}")
 
@@ -192,157 +190,17 @@ class EventSub(WebSocketApp):
             if not session_id:
                 raise TwitchEventSubError("No session ID provided in welcome message")
 
-            with self.__reconnect_lock:
-                if ws.sock == self.sock and not self.__on_reconnection:
-                    # Welcome on primary connection
-                    logger.info(f"Primary session established with ID: {session_id}")
-                    self.__session_id = session_id
-                    self.__is_primary_connection = True
+            # Welcome on primary connection
+            logger.info(f"Primary session established with ID: {session_id}")
+            self.__session_id = session_id
+            self.__is_primary_connection = True
 
-                    # Subscribe to events on primary connection
-                    self.__subscription_with_rate_limiting()
-
-                elif ws.sock == self.__reconnect_ws.sock:
-                    # Welcome on reconnection
-                    logger.info(f"Reconnect session established with ID: {session_id}")
-
-                    # Update session ID for new connection
-                    old_session_id = self.__session_id
-                    self.__session_id = session_id
-
-                    # Mark reconnection as successful
-                    self.__reconnect_success = True
-
-                    # Subscribe to events on new connection
-                    # logger.info("Setting up subscriptions on new connection...")
-                    # self.__subscription_with_rate_limiting()
-
-                    # Now we can safely close the old connection
-                    logger.info("New connection established successfully, closing old connection...")
-                    self._close_old_connection()
-
-                    # Promote reconnection to primary
-                    self.sock = self.__reconnect_ws.sock
-                    self.__reconnect_ws = None
-                    self.__is_primary_connection = True
-                    self.__on_reconnection = False
-
-                    logger.info(
-                        f"Reconnection completed successfully! Old session: {old_session_id}, New session: {session_id}")
-
-                else:
-                    logger.warning("Received welcome on unknown connection")
+            # Subscribe to events on primary connection
+            self.__subscription_with_rate_limiting()
 
         except Exception as e:
             logger.error(f"Failed to handle session welcome: {e}")
             raise TwitchEventSubError(f"Session welcome handling failed: {e}")
-
-    def _handle_reconnect_request(self, payload: Dict[str, Any]) -> None:
-        """
-        Handle reconnection request according to Twitch documentation.
-
-        Process:
-        1. Extract reconnect URL from payload
-        2. Create NEW WebSocket connection to reconnect URL
-        3. Keep old connection alive until new one sends welcome
-        4. Close old connection only after new connection is established
-        """
-        try:
-            session_data = payload.get("session", {})
-            reconnect_url = session_data.get("reconnect_url")
-
-            if not reconnect_url:
-                logger.error("Reconnect request without URL")
-                return
-
-            logger.info(f"🔄 Received reconnection request. New URL: {reconnect_url}")
-            logger.info("📋 Following Twitch reconnection protocol:")
-            logger.info("   1. Creating new connection to reconnect URL")
-            logger.info("   2. Keeping old connection alive until new welcome")
-            logger.info("   3. Will close old connection only after new connection is ready")
-
-            with self.__reconnect_lock:
-                if self.__reconnect_ws:
-                    logger.warning("Reconnection already in progress, ignoring new request")
-                    return
-
-                # Store reconnect URL
-                self.__reconnect_url = reconnect_url
-                self.__reconnect_success = False
-
-                # Create new WebSocket connection in separate thread
-                self.__reconnect_thread = threading.Thread(
-                    target=self._establish_reconnection,
-                    daemon=True
-                )
-                self.__reconnect_thread.start()
-
-        except Exception as e:
-            logger.error(f"Failed to handle reconnect request: {e}")
-
-    def _establish_reconnection(self) -> None:
-        """Establish new WebSocket connection for reconnection."""
-        try:
-            logger.info("🔗 Creating new WebSocket connection for reconnection...")
-
-            # Create new WebSocket with reconnect URL
-            self.__reconnect_ws = WebSocketApp(
-                self.__reconnect_url,
-                on_message=self.on_message,
-                on_open=self._on_reconnect_open,
-                on_close=self._on_reconnect_close,
-                on_error=self._on_reconnect_error
-            )
-
-            # Start the new connection
-            logger.info("📡 Starting reconnection WebSocket...")
-            self.__reconnect_ws.run_forever()
-            logger.info("Reconnect server ended!")
-
-        except Exception as e:
-            logger.error(f"Failed to establish reconnection: {e}")
-            with self.__reconnect_lock:
-                self.__reconnect_ws = None
-                self.__reconnect_success = False
-
-    def _on_reconnect_open(self, ws) -> None:
-        """Handle reconnection WebSocket opening."""
-        logger.info("✅ Reconnection WebSocket opened, waiting for welcome message...")
-        self.__on_reconnection = True
-
-    def _on_reconnect_close(self, ws, close_status_code, close_msg) -> None:
-        """Handle reconnection WebSocket closure."""
-        logger.info(f"🔴 Reconnection WebSocket closed: {close_status_code} - {close_msg}")
-
-        with self.__reconnect_lock:
-            if not self.__reconnect_success:
-                logger.error("Reconnection failed - new connection closed before welcome")
-                self.__reconnect_ws = None
-
-    def _on_reconnect_error(self, ws, error) -> None:
-        """Handle reconnection WebSocket errors."""
-        logger.error(f"❌ Reconnection WebSocket error: {error}")
-
-    def _close_old_connection(self) -> None:
-        """Safely close the old WebSocket connection."""
-        try:
-            if self.sock and self.sock != self.__reconnect_ws.sock:
-                logger.info("🔒 Closing old WebSocket connection...")
-
-                # Close the old connection gracefully
-                old_sock = self.sock
-                self.sock = None  # Prevent interference
-
-
-                if hasattr(old_sock, 'close'):
-                    old_sock.close()
-
-                logger.info("✅ Old connection closed successfully")
-            else:
-                logger.debug("No old connection to close")
-
-        except Exception as e:
-            logger.error(f"Error closing old connection: {e}")
 
     def _handle_notification(self, payload: Dict[str, Any], timestamp: str) -> None:
         """Handle event notification messages."""
@@ -1135,12 +993,6 @@ class EventSub(WebSocketApp):
 
         # Reset session ID to force new session
         self.__session_id = None
-
-        # Reset reconnection state
-        with self.__reconnect_lock:
-            self.__reconnect_url = None
-            self.__reconnect_ws = None
-            self.__reconnect_success = False
 
         # Clear rate limit tracking for fresh start
         current_time = datetime.now()
