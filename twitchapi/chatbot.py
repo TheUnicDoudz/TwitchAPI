@@ -344,7 +344,6 @@ class ChatBot:
                     logger.warning("EventSub server stopped unexpectedly, will retry")
                 else:
                     logger.info("EventSub server stopped by request")
-                    break
 
             except KillThreadException:
                 logger.info("EventSub server stopped by request")
