@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] (31/10/2025) 
 
 ### Added
 - Clips management functionality (creating and editing clips with appropriate endpoints and rights)
