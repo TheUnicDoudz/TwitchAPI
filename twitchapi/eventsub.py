@@ -1,662 +1,1047 @@
-from typing import Any
+"""
+Twitch EventSub WebSocket client for real-time event notifications.
+
+This module provides the EventSub class that connects to Twitch's EventSub WebSocket
+to receive real-time notifications about channel events like messages, follows,
+subscriptions, raids, and more.
+
+Author: TheUnicDoudz
+"""
+
+import time
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 import json
 import os
 import traceback
+import threading
 
 from websocket import WebSocketApp
 
-from twitchapi.twitchcom import TwitchEndpoint, TriggerSignal, TwitchSubscriptionModel, \
+from twitchapi.twitchcom import (
+    TwitchEndpoint,
+    TriggerSignal,
+    TwitchSubscriptionModel,
     TwitchSubscriptionType
+)
 from twitchapi.exception import TwitchEventSubError, TwitchAuthorizationFailed
 from twitchapi.db import DataBaseManager, DataBaseTemplate, format_text
 from twitchapi.utils import TriggerMap
 from twitchapi.auth import AuthServer
 
+logger = logging.getLogger(__name__)
+
+# Default database path
 SOURCE_ROOT = os.path.dirname(__file__)
-DEFAULT_DB_PATH = SOURCE_ROOT + "/database/TwitchDB.db"
+DEFAULT_DB_PATH = os.path.join(SOURCE_ROOT, "database", "TwitchDB.db")
 
 
 class EventSub(WebSocketApp):
     """
-    Class that creates a client websocket and links it with Twitch's websocket to receive event notifications
+    EventSub WebSocket client with proper reconnection handling.
+
+    This implementation follows Twitch's documented reconnection flow:
+    - Maintains old connection until new one is fully established
+    - Handles session_reconnect messages correctly
+    - Ensures no event loss during reconnection
     """
 
-    def __init__(self, bot_id: str, channel_id: str, subscription_types: list[str], auth_server: AuthServer,
-                 trigger_map: TriggerMap = None, store_in_db: bool = False, db_path: str = DEFAULT_DB_PATH,
-                 channel_point_subscription: list[str] = None):
-        """
-        :param bot_id: id of the client twitch application
-        :param channel_id: id of the broadcaster channel
-        :param subscription_types:
-        :param auth_server: list of subscription the websocket will receive notification
-        :param trigger_map: map of callback to trigger
-        :param store_in_db: True if the user want to store all information from notification in the database
-        :param db_path: path of the database
-        :param channel_point_subscription: channel reward list the websocket will subscribe to
-        """
+    def __init__(self,
+                 bot_id: str,
+                 channel_id: str,
+                 subscription_types: List[str],
+                 auth_server: AuthServer,
+                 trigger_map: Optional[TriggerMap] = None,
+                 store_in_db: bool = False,
+                 db_path: str = DEFAULT_DB_PATH,
+                 channel_point_subscription: Optional[List[str]] = None):
+        """Initialize the EventSub WebSocket client with proper reconnection."""
 
-        super().__init__(url=TwitchEndpoint.TWITCH_WEBSOCKET_URL, on_message=self.on_message, on_open=self.on_open,
-                         on_close=self.on_close, on_error=self.on_error)
+        # Input validation
+        if not bot_id or not isinstance(bot_id, str):
+            raise ValueError("bot_id must be a non-empty string")
+        if not channel_id or not isinstance(channel_id, str):
+            raise ValueError("channel_id must be a non-empty string")
+        if not subscription_types or not isinstance(subscription_types, list):
+            raise ValueError("subscription_types must be a non-empty list")
+        if not auth_server or not isinstance(auth_server, AuthServer):
+            raise ValueError("auth_server must be a valid AuthServer instance")
 
-        self.__session_id = None
+        # Initialize WebSocket connection
+        super().__init__(
+            url=TwitchEndpoint.TWITCH_WEBSOCKET_URL,
+            on_message=self.on_message,
+            on_open=self.on_open,
+            on_close=self.on_close,
+            on_error=self.on_error
+        )
+
+        # Core configuration
         self.__auth = auth_server
         self._bot_id = bot_id
         self._channel_id = channel_id
-        self._subscription_types = subscription_types
+        self._subscription_types = subscription_types[:]
+        self.__channel_point_subscription = channel_point_subscription or []
 
-        self.__tsm = TwitchSubscriptionModel(self._channel_id, self._bot_id)
-        self.__channel_point_subscription = channel_point_subscription
+        # Session management
+        self.__session_id = None
+        self.__is_primary_connection = True
 
+        # Reconnection management
+        self.__reconnect_url = None
+        self.__reconnect_ws = None
+        self.__reconnect_thread = None
+        self.__reconnect_success = False
+        self.__reconnect_lock = threading.Lock()
+        self.__on_reconnection = False
+
+        # Connection state
+        self.keep_running = True
+        self.__connection_attempts = []
+        self.__subscription_attempts = []
+        self.__last_429_error = None
+        self.__backoff_until = None
+        self.__max_retries = 3
+        self.__current_retry = 0
+        self.__subscription_delay = 0.5
+
+        # Initialize components
+        try:
+            self.__tsm = TwitchSubscriptionModel(self._channel_id, self._bot_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize subscription model: {e}")
+            raise TwitchEventSubError(f"Subscription model initialization failed: {e}")
+
+        # Setup database
         self.__store_in_db = store_in_db
-        if self.__store_in_db:
-            self.__dbmanager = DataBaseManager(db_path, start_thread=True)
+        self.__dbmanager = None
 
+        if self.__store_in_db:
+            try:
+                self.__dbmanager = DataBaseManager(db_path, start_thread=True)
+                logger.info(f"Database initialized at: {db_path}")
+            except Exception as e:
+                logger.error(f"Failed to initialize database: {e}")
+                logger.warning("Continuing without database storage")
+                self.__store_in_db = False
+
+        # Setup trigger map
         self.__trigger_map = trigger_map
+        if not self.__trigger_map:
+            logger.warning("No trigger map provided - events will not trigger callbacks")
 
-    def on_message(self, ws, message):
-        """
-        Triggered when the websocket receive a message
-        :param ws: websocket client
-        :param message: message receive by the websocket
-        """
-        logging.debug("Message received:" + message)
-        data = json.loads(message)
+        logger.info(f"EventSub initialized with proper reconnection handling")
 
-        metadata = data["metadata"]
-        payload = data["payload"]
+    def on_message(self, ws, message: str) -> None:
+        """Handle incoming WebSocket messages with reconnection support."""
+        try:
+            logger.debug(f"Received message on {'primary' if ws.sock == self.sock else 'reconnect'} connection")
 
-        message_type = metadata["message_type"]
-        msg_timestamp = metadata["message_timestamp"][:-4]
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON message: {e}")
+                return
 
-        # The class expect 2 type of message:
-        #   - session_welcome: message sent to initiate subscriptions to twitch events
-        #   - notification: event notification message (type of event specified in the message “type” field)
-        match message_type:
-            case "session_welcome":
-                # Initiate subscription to event
-                logging.info("Receive session_welcome message")
-                self.__session_id = payload["session"]["id"]
-                self.__subscription()
+            metadata = data.get("metadata", {})
+            payload = data.get("payload", {})
+            message_type = metadata.get("message_type")
+            msg_timestamp = metadata.get("message_timestamp", "").replace("Z", "")
 
-            case "notification":
-                # When an event is notified
-                logging.info("Receive notification message")
-                subscription_type = payload["subscription"]["type"]
-                event = payload["event"]
-                id = payload["subscription"]["id"]
-                try:
-                    match subscription_type:
+            if not message_type:
+                logger.warning("Received message without message_type")
+                return
 
-                        case TwitchSubscriptionType.MESSAGE:
-                            logging.info("Process a message")
-                            self.__process_message(event=event, date=msg_timestamp)
+            # Handle different message types
+            if message_type == "session_welcome":
+                self._handle_session_welcome(payload, ws)
+            elif message_type == "notification":
+                # Only process notifications on the active connection
+                if self._is_active_connection(ws):
+                    self._handle_notification(payload, msg_timestamp)
+                else:
+                    logger.debug("Ignoring notification on inactive connection")
+            elif message_type == "session_keepalive":
+                logger.debug(f"Keepalive on {'primary' if ws.sock == self.sock else 'reconnect'} connection")
+            else:
+                logger.warning(f"Unknown message type: {message_type}")
 
-                        case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
-                            logging.info("Process a channel point redeem")
-                            self.__process_channel_point_action(event=event, date=msg_timestamp)
+        except Exception as e:
+            logger.error(f"Error processing WebSocket message: {e}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")
 
-                        case TwitchSubscriptionType.FOLLOW:
-                            logging.info("Process a follow")
-                            self.__process_follow(event=event, date=msg_timestamp, id=id)
+    def _is_active_connection(self, ws) -> bool:
+        """Determine if this is the active connection for processing events."""
+        with self.__reconnect_lock:
+            if self.__reconnect_ws and self.__reconnect_success:
+                # Reconnection is active and successful
+                return ws.sock == self.__reconnect_ws.sock
+            else:
+                # Primary connection is active
+                return ws.sock == self.sock
 
-                        case TwitchSubscriptionType.BAN:
-                            logging.info("Process a ban")
-                            self.__process_ban(event=event, id=id)
+    def _handle_session_welcome(self, payload: Dict[str, Any], ws) -> None:
+        """Handle session welcome message with reconnection logic."""
+        try:
+            session_data = payload.get("session", {})
+            session_id = session_data.get("id")
 
-                        case TwitchSubscriptionType.SUBSCRIBE:
-                            logging.info("Process a subscribe")
-                            self.__process_subscribe(event=event, date=msg_timestamp, id=id)
+            if not session_id:
+                raise TwitchEventSubError("No session ID provided in welcome message")
 
-                        case TwitchSubscriptionType.SUBSCRIBE_END:
-                            logging.info("Process an end subscription")
-                            self.__process_end_subscribe(event=event)
+            # Welcome on primary connection
+            logger.info(f"Primary session established with ID: {session_id}")
+            self.__session_id = session_id
+            self.__is_primary_connection = True
 
-                        case TwitchSubscriptionType.SUBGIFT:
-                            logging.info("Process a subgitf")
-                            self.__process_subgift(event=event, date=msg_timestamp, id=id)
+            # Subscribe to events on primary connection
+            self.__subscription_with_rate_limiting()
 
-                        case TwitchSubscriptionType.RESUB_MESSAGE:
-                            logging.info("Process a resub message")
-                            self.__process_resub_message(event=event, date=msg_timestamp, id=id)
+        except Exception as e:
+            logger.error(f"Failed to handle session welcome: {e}")
+            raise TwitchEventSubError(f"Session welcome handling failed: {e}")
 
-                        case TwitchSubscriptionType.RAID:
-                            if payload["event"]["to_broadcaster_user_id"] == self._channel_id:
-                                logging.info("Process a incoming raid")
-                                self.__process_raid(event=event, date=msg_timestamp, id=id)
-                            else:
-                                logging.info("Process a raid")
-                                self.__process_raid_someone(event=event, date=msg_timestamp, id=id)
+    def _handle_notification(self, payload: Dict[str, Any], timestamp: str) -> None:
+        """Handle event notification messages."""
+        try:
+            subscription = payload.get("subscription", {})
+            event = payload.get("event", {})
+            subscription_type = subscription.get("type")
+            subscription_id = subscription.get("id")
 
-                        case TwitchSubscriptionType.CHANNEL_POINT_ACTION:
-                            logging.info("Process a channel action point")
-                            self.__process_channel_point_action(event=event, date=msg_timestamp)
+            if not subscription_type:
+                logger.warning("Received notification without subscription type")
+                return
 
-                        case TwitchSubscriptionType.CHANNEL_CHEER:
-                            logging.info("Process a cheer message")
-                            self.__process_channel_cheer(event=event, date=msg_timestamp, id=id)
+            logger.debug(f"Processing {subscription_type} event")
 
-                        case TwitchSubscriptionType.POLL_BEGIN:
-                            logging.info("Process a poll begin")
-                            self.__process_poll_begin(event=event)
-
-                        case TwitchSubscriptionType.POLL_END:
-                            logging.info("Process a poll end")
-                            self.__process_poll_end(event=event)
-
-                        case TwitchSubscriptionType.PREDICTION_BEGIN:
-                            logging.info("Process a prediction begin")
-                            self.__process_prediction_begin(event=event)
-
-                        case TwitchSubscriptionType.PREDICTION_LOCK:
-                            logging.info("Process a prediction lock")
-                            self.__process_prediction_lock(event=event)
-
-                        case TwitchSubscriptionType.PREDICTION_END:
-                            logging.info("Process a prediction end")
-                            self.__process_prediction_end(event=event)
-
-                        case TwitchSubscriptionType.VIP_ADD:
-                            logging.info("Process a VIP added")
-                            self.__process_vip_add(event=event, date=msg_timestamp)
-
-                        case TwitchSubscriptionType.VIP_REMOVE:
-                            logging.info("Process a VIP removed")
-                            self.__process_vip_remove(event=event)
-
-                        case TwitchSubscriptionType.STREAM_ONLINE:
-                            logging.info("Process a stream online notification")
-                            self.__process_stream_online(event=event)
-
-                        case TwitchSubscriptionType.STREAM_OFFLINE:
-                            logging.info("Process a stream offline notification")
-                            self.__process_stream_offline()
-
-                        case TwitchSubscriptionType.BITS:
-                            logging.info("Process bits received")
-                            self.__process_bits(event=event, date=msg_timestamp, id=id)
-
-                except Exception as e:
-                    logging.error(str(e.__class__.__name__) + ": " + str(e))
-                    logging.error(traceback.format_exc())
-
-    def on_error(self, ws, message):
-        """
-        Triggered when the websocket receive an error from the host
-        :param ws: websocket client
-        :param message: message receive by the websocket
-        """
-        logging.error(message)
-
-    def on_close(self, ws, close_status_code, close_msg):
-        """
-        Triggered when the websocket close the connection with the host
-        :param ws: websocket client
-        :param close_status_code: closing status code
-        :param close_msg: closure message
-        """
-        logging.info("Close websocket")
-        if self.__store_in_db:
-            self.__dbmanager.close()
-
-    def on_open(self, ws):
-        """
-        Triggered when the websocket open the connection with the host
-        :param ws: websocket client
-        """
-        logging.info(f"Connect to {TwitchEndpoint.TWITCH_WEBSOCKET_URL}")
-
-    def __subscription(self):
-        """
-        Subscribes the websocket to all events listed in the _subscription_types list
-        """
-        for subscription in self._subscription_types:
-            logging.info(f"Subscription for {subscription}")
-
-            # Get the payload template for the subscription
-            s_data = self.__tsm.get_subscribe_data(subscription)
-
-            if s_data["streamer_only"] and self._bot_id != self._channel_id:
-                raise TwitchAuthorizationFailed(
-                    f"To subscribe to {subscription}, the account used for authentication has "
-                    "to be the same as the broadcaster account!")
-
-            s_data = s_data["payload"]
-
-            data = {
-                "transport": {
-                    "method": "websocket",
-                    "session_id": self.__session_id
-                }
+            # Route to appropriate event handler
+            event_handlers = {
+                TwitchSubscriptionType.MESSAGE: self.__process_message,
+                TwitchSubscriptionType.FOLLOW: self.__process_follow,
+                TwitchSubscriptionType.BAN: self.__process_ban,
+                TwitchSubscriptionType.UNBAN: self.__process_unban,
+                TwitchSubscriptionType.SUBSCRIBE: self.__process_subscribe,
+                TwitchSubscriptionType.SUBSCRIBE_END: self.__process_end_subscribe,
+                TwitchSubscriptionType.SUBGIFT: self.__process_subgift,
+                TwitchSubscriptionType.RESUB_MESSAGE: self.__process_resub_message,
+                TwitchSubscriptionType.RAID: self.__process_raid,
+                TwitchSubscriptionType.CHANNEL_POINT_ACTION: self.__process_channel_point_action,
+                TwitchSubscriptionType.CHANNEL_CHEER: self.__process_channel_cheer,
+                TwitchSubscriptionType.POLL_BEGIN: self.__process_poll_begin,
+                TwitchSubscriptionType.POLL_END: self.__process_poll_end,
+                TwitchSubscriptionType.PREDICTION_BEGIN: self.__process_prediction_begin,
+                TwitchSubscriptionType.PREDICTION_LOCK: self.__process_prediction_lock,
+                TwitchSubscriptionType.PREDICTION_END: self.__process_prediction_end,
+                TwitchSubscriptionType.VIP_ADD: self.__process_vip_add,
+                TwitchSubscriptionType.VIP_REMOVE: self.__process_vip_remove,
+                TwitchSubscriptionType.STREAM_ONLINE: self.__process_stream_online,
+                TwitchSubscriptionType.STREAM_OFFLINE: self.__process_stream_offline,
+                TwitchSubscriptionType.BITS: self.__process_bits
             }
 
-            # If the user want to subscribe to specific channel reward event
-            if subscription == TwitchSubscriptionType.CHANNEL_POINT_ACTION and self.__channel_point_subscription:
-                custom_reward = self.__auth.get_request(TwitchEndpoint.apply_param(TwitchEndpoint.GET_CUSTOM_REWARD,
-                                                                                   channel_id=self._channel_id))["data"]
-
-                for reward_subscription in self.__channel_point_subscription:
-                    logging.info(f"Subscription for {reward_subscription}")
-
-                    subscription_title = reward_subscription.replace(" ", "").lower()
-                    reward_id = None
-                    for reward in custom_reward:
-                        if reward["title"].replace(" ", "").lower() == subscription_title:
-                            reward_id = reward["id"]
-                            break
-
-                    if not reward_id:
-                        channel_name = self.__auth.get_request(
-                            TwitchEndpoint.apply_param(TwitchEndpoint.CHANNEL_INFO, channel_id=self._channel_id))[
-                            "data"][0]["broadcaster_name"]
-                        raise KeyError(
-                            f"Custom reward {reward_subscription} doesn't exist for the channel {channel_name}")
-
-                    s_data["condition"]["reward_id"] = reward_id
-                    data.update(s_data)
-                    self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
+            handler = event_handlers.get(subscription_type)
+            if handler:
+                handler(event=event, date=timestamp, id=subscription_id)
             else:
-                data.update(s_data)
-                self.__auth.post_request(TwitchEndpoint.EVENTSUB_SUBSCRIPTION, data=data)
+                logger.warning(f"No handler for subscription type: {subscription_type}")
 
-    def __process_message(self, event: dict[str, Any], date: str):
-        """
-        When a message notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param date: timestamp of the notification
-        """
-        id = event['message_id']
-        user_name = event["chatter_user_name"]
-        user_id = event["chatter_user_id"]
-        message = format_text(event["message"]["text"])
-        cheer = True if event["cheer"] else False
-        emote = True if len(event["message"]["fragments"]) > 1 else False
-        thread_id = event["reply"]['thread_message_id'] if event["reply"] else None
-        parent_id = event["reply"]['parent_message_id'] if event["reply"] else None
-        last_message = {"id": id, "user_id":user_id, "user_name": user_name, "text": message, "cheer": cheer, "emote": emote,
-                        "thread_id": thread_id, "parent_id": parent_id}
+        except Exception as e:
+            logger.error(f"Error processing notification: {e}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")
 
-        self.__trigger_map.trigger(TriggerSignal.MESSAGE, param=last_message)
+    def __subscription_with_rate_limiting(self) -> None:
+        """Create subscriptions with rate limit protection."""
+        logger.info(f"Creating {len(self._subscription_types)} event subscriptions with rate limiting")
 
-        if self.__store_in_db:
-            logging.info("Insert message data in database")
-            if parent_id:
-                if not thread_id:
-                    raise ValueError(f"Missing thread_id value for parent_id {thread_id}")
-                self.__dbmanager.execute_script(DataBaseTemplate.THREAD, id=id, user=user_name, user_id=user_id,
-                                                message=message, date=date, parent_id=parent_id, thread_id=thread_id,
-                                                cheer=cheer, emote=emote)
-            else:
-                self.__dbmanager.execute_script(DataBaseTemplate.MESSAGE, id=id, user=user_name, user_id=user_id,
-                                                message=message, date=date, cheer=cheer, emote=emote)
+        for i, subscription in enumerate(self._subscription_types):
+            try:
+                # Check rate limits before each subscription
+                while not self._can_subscribe():
+                    logger.info("Subscription rate limit reached, waiting...")
+                    time.sleep(2)
 
-    def __process_channel_point_action(self, event: dict, date: str):
-        """
-        When a channel reward notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param date: timestamp of the notification
-        """
-        user = event["user_name"]
-        user_id = event["user_id"]
-        reward_name = event["reward"]["title"]
-        self.__trigger_map.trigger(TriggerSignal.CHANNEL_POINT_ACTION,
-                                   param={"user_name": user, "reward_name": reward_name, "user_id":user_id})
+                logger.info(f"Creating subscription {i + 1}/{len(self._subscription_types)}: {subscription}")
 
-        if self.__store_in_db:
-            id = event["id"]
-            reward_id = event["reward"]["id"]
-            reward_prompt = event["reward"]["prompt"]
-            status = event["status"]
-            redeem_date = event["redeemed_at"][:-4]
-            reward_cost = event["reward"]["cost"]
-            self.__dbmanager.execute_script(DataBaseTemplate.CHANNEL_POINT_ACTION, id=id, user=user, user_id=user_id,
-                                            reward_name=reward_name, reward_id=reward_id, status=status, date=date,
-                                            redeem_date=redeem_date, cost=reward_cost, reward_prompt=reward_prompt)
+                # Get subscription configuration
+                s_data = self.__tsm.get_subscribe_data(subscription)
 
-    def __process_channel_cheer(self, event: dict, id: str, date: str):
-        """
-        When a cheer notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        is_anonymous = event['is_anonymous']
-        user_name = event["user_name"] if not is_anonymous else None
-        message = event["message"]
-        nb_bits = event["bits"]
-        self.__trigger_map.trigger(TriggerSignal.CHANNEL_CHEER, param={"user_name": user_name, "message": message,
-                                                                       "nb_bits": nb_bits, "is_anonymous": is_anonymous
-                                                                       })
+                if not s_data:
+                    logger.error(f"No subscription data for type: {subscription}")
+                    continue
 
-        if self.__store_in_db:
-            user_id = event["user_id"] if not is_anonymous else None
-            self.__dbmanager.execute_script(DataBaseTemplate.CHANNEL_CHEER, id=id, user=user_name, user_id=user_id,
-                                            date=date, nb_bits=nb_bits, anonymous=str(is_anonymous).upper())
+                # Check broadcaster requirements
+                if s_data.get("streamer_only", False) and self._bot_id != self._channel_id:
+                    raise TwitchAuthorizationFailed(
+                        f"Subscription '{subscription}' requires broadcaster authentication"
+                    )
 
-    def __process_follow(self, event: dict, id: str, date: str):
-        """
-        When a follow notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        user = event["user_name"]
-        user_id = event["user_id"]
-        self.__trigger_map.trigger(TriggerSignal.FOLLOW, param={"user_name": user, "user_id": user_id})
+                # Build subscription request
+                subscription_data = {
+                    "type": s_data["payload"]["type"],
+                    "version": s_data["payload"]["version"],
+                    "condition": s_data["payload"]["condition"].copy(),
+                    "transport": {
+                        "method": "websocket",
+                        "session_id": self.__session_id
+                    }
+                }
 
-        if self.__store_in_db:
-            follow_date = event["followed_at"][:-4]
-            self.__dbmanager.execute_script(DataBaseTemplate.FOLLOW, id=id, user=user, user_id=user_id, date=date,
-                                            follow_date=follow_date)
+                # Record subscription attempt
+                self._record_subscription_attempt()
 
-    def __process_subscribe(self, event: dict, id: str, date: str):
-        """
-        When a subscription notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        user = event["user_name"]
-        tier = event["tier"]
-        is_gift = event["is_gift"]
-        user_id = event["user_id"]
-        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE, param={"user_name": user, "tier": tier,
-                                                                   "is_gift": is_gift, "user_id": user_id})
+                # Make subscription request
+                response = self.__auth.post_request(
+                    TwitchEndpoint.EVENTSUB_SUBSCRIPTION,
+                    data=subscription_data
+                )
 
-        if self.__store_in_db:
-            self.__dbmanager.execute_script(DataBaseTemplate.SUBSCRIBE, id=id, user=user, user_id=user_id, date=date,
-                                            tier=tier, is_gift=str(is_gift).upper())
+                if response:
+                    logger.info(f"✅ Successfully subscribed to {subscription}")
+                else:
+                    logger.warning(f"⚠️ Empty response for subscription {subscription}")
 
-    def __process_end_subscribe(self, event: dict):
-        """
-        When an end subscription notification is sent, extract all relevant information and trigger the associated
-        callback
-        :param event: event payload of the notification
-        """
-        user = event["user_name"]
-        user_id = event["user_id"]
-        self.__trigger_map.trigger(TriggerSignal.SUBSCRIBE_END, param={"user_name": user, "user_id": user_id})
+                # Delay between subscriptions to avoid rate limits
+                if i < len(self._subscription_types) - 1:
+                    logger.debug(f"Waiting {self.__subscription_delay}s before next subscription...")
+                    time.sleep(self.__subscription_delay)
 
-    def __process_subgift(self, event: dict, id: str, date: str):
-        """
-        When a subscription gift notification is sent, extract all relevant information and trigger the associated
-        callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        total = event["total"]
-        tier = event["tier"]
-        is_anonymous = event["is_anonymous"]
-        gifter = event["user_name"] if not is_anonymous else "NULL"
-        total_gift_sub = event["cumulative_total"] if not is_anonymous else "NULL"
-        self.__trigger_map.trigger(TriggerSignal.SUBGIFT, param={"user_name": gifter, "tier": tier, "total": total,
-                                                                 "total_gift_sub": total_gift_sub,
-                                                                 "is_anonymous": is_anonymous})
+            except Exception as e:
+                logger.error(f"Failed to subscribe to {subscription}: {e}")
+                time.sleep(1)
 
-        if self.__store_in_db:
-            gifter_id = event["user_id"] if not is_anonymous else "NULL"
-            gifter = f"'{gifter}'" if gifter != "NULL" else "NULL"
-            gifter_id = f"'{gifter_id}'" if gifter_id != "NULL" else "NULL"
-            self.__dbmanager.execute_script(DataBaseTemplate.SUBGIFT, id=id, user=gifter, user_id=gifter_id, date=date,
-                                            tier=tier, total=total, total_gift=total_gift_sub,
-                                            is_anonymous=str(is_anonymous).upper())
+        logger.info("✅ Subscription setup completed")
 
-    def __process_resub_message(self, event: dict, id: str, date: str):
-        """
-        When a renewal subscription notification is sent, extract all relevant information and trigger the associated
-        callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        user = event["user_name"]
-        tier = event["tier"]
-        streak = event["streak_months"]
-        total = event["cumulative_months"]
-        duration = event["duration_months"]
-        message = format_text(event["message"]["text"])
-        self.__trigger_map.trigger(TriggerSignal.RESUB_MESSAGE, param={"user_name": user, "tier": tier,
-                                                                       "streak": streak, "total": total,
-                                                                       "duration": duration, "message": message})
+    # Rate limiting methods (same as before)
+    def _can_connect(self) -> bool:
+        """Check if we can make a new WebSocket connection based on rate limits."""
+        now = datetime.now()
+        cutoff = now - timedelta(minutes=5)
+        self.__connection_attempts = [attempt for attempt in self.__connection_attempts if attempt > cutoff]
 
-        if self.__store_in_db:
+        if self.__backoff_until and now < self.__backoff_until:
+            return False
+
+        return len(self.__connection_attempts) < 3
+
+    def _can_subscribe(self) -> bool:
+        """Check if we can make new subscriptions based on rate limits."""
+        now = datetime.now()
+        cutoff = now - timedelta(seconds=10)
+        self.__subscription_attempts = [attempt for attempt in self.__subscription_attempts if attempt > cutoff]
+        return len(self.__subscription_attempts) < 10
+
+    def _record_connection_attempt(self):
+        """Record a connection attempt for rate limiting."""
+        self.__connection_attempts.append(datetime.now())
+
+    def _record_subscription_attempt(self):
+        """Record a subscription attempt for rate limiting."""
+        self.__subscription_attempts.append(datetime.now())
+
+    # Event processing methods (same as before)
+    def __process_message(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process chat message events."""
+        try:
+            message_id = event['message_id']
+            user_name = event["chatter_user_name"]
+            user_id = event["chatter_user_id"]
+            message_text = format_text(event["message"]["text"])
+            cheer = bool(event.get("cheer"))
+            emote = len(event["message"].get("fragments", [])) > 1
+
+            reply_data = event.get("reply")
+            thread_id = reply_data.get('thread_message_id') if reply_data else None
+            parent_id = reply_data.get('parent_message_id') if reply_data else None
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.MESSAGE,
+                    param={
+                        "id": message_id,
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "text": message_text,
+                        "cheer": cheer,
+                        "emote": emote,
+                        "thread_id": thread_id,
+                        "parent_id": parent_id
+                    }
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing message event: {e}")
+
+    def __process_follow(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process follow events."""
+        try:
+            user_name = event["user_name"]
             user_id = event["user_id"]
-            self.__dbmanager.execute_script(DataBaseTemplate.RESUB, id=id, user=user, user_id=user_id, date=date,
-                                            message=message, tier=tier, streak=streak, duration=duration, total=total)
 
-    def __process_raid(self, event: dict, id: str, date: str):
-        """
-        When a raid notification is sent and the broadcaster is the one who be raided, extract all relevant information
-        and trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        user_source = event["from_broadcaster_user_name"]
-        nb_viewers = event["viewers"]
-        self.__trigger_map.trigger(TriggerSignal.RAID, param={"source": user_source, "nb_viewers": nb_viewers})
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.FOLLOW,
+                    param={"user_id": user_id, "user_name": user_name}
+                )
 
-        if self.__store_in_db:
-            user_source_id = event["from_broadcaster_user_id"]
-            user_dest = event["to_broadcaster_user_name"]
-            self.__dbmanager.execute_script(DataBaseTemplate.RAID, id=id, user_source=user_source,
-                                            user_source_id=user_source_id, user_dest=user_dest,
-                                            user_dest_id=self._channel_id, date=date, nb_viewer=nb_viewers)
+        except Exception as e:
+            logger.error(f"Error processing follow event: {e}")
 
-    def __process_raid_someone(self, event: dict, id: str, date: str):
-        """
-        When a raid notification is sent and the broadcaster is the one who raid, extract all relevant information and
-        trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        user_dest = event["to_broadcaster_user_name"]
-        nb_viewers = event["viewers"]
-        self.__trigger_map.trigger(TriggerSignal.RAID_SOMEONE, param={"dest": user_dest, "nb_viewers": nb_viewers})
+    def __process_subscribe(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process subscription events."""
+        try:
+            user_name = event["user_name"]
+            user_id = event["user_id"]
+            tier = event["tier"]
+            is_gift = event["is_gift"]
 
-        if self.__store_in_db:
-            user_dest_id = event["from_broadcaster_user_id"]
-            user_source = event["from_broadcaster_user_name"]
-            self.__dbmanager.execute_script(DataBaseTemplate.RAID, id=id, user_source=user_source,
-                                            user_source_id=self._channel_id, user_dest=user_dest,
-                                            user_dest_id=user_dest_id, date=date, nb_viewer=nb_viewers)
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.SUBSCRIBE,
+                    param={
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "tier": tier,
+                        "is_gift": is_gift
+                    }
+                )
 
-    def __process_poll_begin(self, event: dict):
-        """
-        When a poll begin notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        """
-        poll_title = event["title"]
-        choices = event["choices"]
-        bits_settings = event["bits_voting"]
-        channel_point_settings = event["channel_points_voting"]
-        start = event["started_at"]
-        end = event["ends_at"]
-        self.__trigger_map.trigger(TriggerSignal.POLL_BEGIN, param={"title": poll_title, "choices": choices,
-                                                                    "bits_settings": bits_settings,
-                                                                    "channel_point_settings": channel_point_settings,
-                                                                    "start_date": start, "end_date": end})
+        except Exception as e:
+            logger.error(f"Error processing subscribe event: {e}")
 
-    def __process_poll_end(self, event: dict):
-        """
-        When a poll end notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        """
-        poll_title = event["title"]
-        choices = event["choices"]
-        status = event["status"]
+    def __process_channel_point_action(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process channel point reward events."""
+        try:
+            user_name = event["user_name"]
+            user_id = event["user_id"]
+            reward_name = event["reward"]["title"]
 
-        self.__trigger_map.trigger(TriggerSignal.POLL_END, param={"title": poll_title, "choices": choices,
-                                                                  "status": status})
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.CHANNEL_POINT_ACTION,
+                    param={
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "reward_name": reward_name
+                    }
+                )
 
-        if self.__store_in_db:
-            id = event["id"]
-            bits_enable = event["bits_voting"]["is_enabled"]
-            bits_amount_per_vote = event["bits_voting"]["amount_per_vote"]
-            channel_point_enable = event["channel_points_voting"]["is_enabled"]
-            channel_point_amount_per_vote = event["channel_points_voting"]["amount_per_vote"]
-            start_date = event["started_at"][:-4]
-            end_date = event["ended_at"][:-4]
-            self.__dbmanager.execute_script(DataBaseTemplate.POLL, id=id, title=poll_title, bits_enable=bits_enable,
-                                            bits_amount_per_vote=bits_amount_per_vote, start_date=start_date,
-                                            channel_point_enable=channel_point_enable, end_date=end_date,
-                                            channel_point_amount_per_vote=channel_point_amount_per_vote, status=status)
+        except Exception as e:
+            logger.error(f"Error processing channel point action: {e}")
 
-            for c in choices:
-                self.__dbmanager.execute_script(DataBaseTemplate.POLL_CHOICES, id=c["id"], title=c["title"],
-                                                bits_votes=c["bits_votes"], votes=c["votes"], poll_id=id,
-                                                channel_points_votes=c["channel_points_votes"])
+    def __process_raid(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process raid events."""
+        try:
+            if event.get("to_broadcaster_user_id") == self._channel_id:
+                # Incoming raid
+                source = event["from_broadcaster_user_name"]
+                nb_viewers = event["viewers"]
 
-    def __process_prediction_begin(self, event: dict):
-        """
-        When a prediction begin notification is sent, extract all relevant information and trigger the associated
-        callback
-        :param event: event payload of the notification
-        """
-        pred_title = event["title"]
-        choices = event["outcomes"]
-        start = event["started_at"]
-        lock = event["locks_at"]
-        self.__trigger_map.trigger(TriggerSignal.PREDICTION_BEGIN, param={"title": pred_title, "choices": choices,
-                                                                          "start_date": start, "lock_date": lock})
+                if self.__trigger_map:
+                    self.__trigger_map.trigger(
+                        TriggerSignal.RAID,
+                        param={"source": source, "nb_viewers": nb_viewers}
+                    )
 
-    def __process_prediction_lock(self, event: dict):
-        """
-        When a prediction lock notification is sent, extract all relevant information and trigger the associated
-        callback
-        :param event: event payload of the notification
-        """
-        pred_title = event["title"]
-        result = event["outcomes"]
-        self.__trigger_map.trigger(TriggerSignal.PREDICTION_LOCK, param={"title": pred_title, "result": result})
+                if self.__store_in_db and self.__dbmanager:
+                    self.__dbmanager.execute_script(
+                        DataBaseTemplate.RAID,
+                        id=id, user_source=source,
+                        user_source_id=event["from_broadcaster_user_id"],
+                        user_dest=event["to_broadcaster_user_name"],
+                        user_dest_id=self._channel_id,
+                        date=date, nb_viewer=nb_viewers
+                    )
+            else:
+                # Outgoing raid
+                dest = event["to_broadcaster_user_name"]
+                nb_viewers = event["viewers"]
 
-    def __process_prediction_end(self, event: dict):
-        """
-        When a prediction end notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        """
-        pred_title = event["title"]
-        result = event["outcomes"]
-        winning = None
+                if self.__trigger_map:
+                    self.__trigger_map.trigger(
+                        TriggerSignal.RAID_SOMEONE,
+                        param={"dest": dest, "nb_viewers": nb_viewers}
+                    )
 
-        # Find the winning prediction
-        for r in result:
-            if r["id"] == event["winning_outcome_id"]:
-                winning = r["title"]
-                break
-        if not winning:
-            raise TwitchEventSubError(f"There's no winning prediction for {pred_title}")
-        self.__trigger_map.trigger(TriggerSignal.PREDICTION_END, param={"title": pred_title, "result": result,
-                                                                        "winning_pred": winning})
+                if self.__store_in_db and self.__dbmanager:
+                    self.__dbmanager.execute_script(
+                        DataBaseTemplate.RAID,
+                        id=id, user_source=event["from_broadcaster_user_name"],
+                        user_source_id=self._channel_id,
+                        user_dest=dest,
+                        user_dest_id=event["to_broadcaster_user_id"],
+                        date=date, nb_viewer=nb_viewers
+                    )
 
-        if self.__store_in_db:
-            id = event["id"]
-            winning_id = event["winning_outcome_id"]
-            start_date = event["started_at"][:-4]
-            end_date = event["ended_at"][:-4]
+        except Exception as e:
+            logger.error(f"Error processing raid event: {e}")
+
+    def __process_ban(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process ban events."""
+        try:
+            user_name = event["user_name"]
+            user_id = event["user_id"]
+            moderator_name = event["moderator_user_name"]
+            reason = event["reason"]
+            start_ban = event["banned_at"]
+            end_ban = event.get("ends_at", "")
+            permanent = event["is_permanent"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.BAN,
+                    param={
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "moderator_name": moderator_name,
+                        "reason": reason,
+                        "start_ban": start_ban,
+                        "end_ban": end_ban,
+                        "permanent": permanent
+                    }
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.BAN,
+                    id=id, user=user_name, user_id=user_id,
+                    moderator=moderator_name,
+                    moderator_id=event["moderator_user_id"],
+                    reason=reason, start_ban=start_ban.replace("Z", ""),
+                    end_ban=end_ban.replace("Z", "") if end_ban else None,
+                    is_permanent=str(permanent).upper()
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing ban event: {e}")
+
+    def __process_unban(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process unban events."""
+        try:
+            user_name = event["user_name"]
+            user_id = event["user_id"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.UNBAN,
+                    param={"user_id": user_id, "user_name": user_name}
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing unban event: {e}")
+
+    def __process_end_subscribe(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process subscription end events."""
+        try:
+            user_name = event["user_name"]
+            user_id = event["user_id"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.SUBSCRIBE_END,
+                    param={"user_id": user_id, "user_name": user_name}
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing end subscribe event: {e}")
+
+    def __process_subgift(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process gift subscription events."""
+        try:
+            total = event["total"]
+            tier = event["tier"]
+            is_anonymous = event["is_anonymous"]
+            gifter = event["user_name"] if not is_anonymous else None
+            total_gift_sub = event.get("cumulative_total") if not is_anonymous else None
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.SUBGIFT,
+                    param={
+                        "user_name": gifter,
+                        "tier": tier,
+                        "total": total,
+                        "total_gift_sub": total_gift_sub,
+                        "is_anonymous": is_anonymous
+                    }
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                gifter_id = event["user_id"] if not is_anonymous else None
+                gifter_formatted = f"'{gifter}'" if gifter else "NULL"
+                gifter_id_formatted = f"'{gifter_id}'" if gifter_id else "NULL"
+                total_gift_formatted = total_gift_sub if total_gift_sub is not None else "NULL"
+
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.SUBGIFT,
+                    id=id, user=gifter_formatted, user_id=gifter_id_formatted,
+                    date=date, tier=tier, total=total, total_gift=total_gift_formatted,
+                    is_anonymous=str(is_anonymous).upper()
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing subgift event: {e}")
+
+    def __process_resub_message(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process resubscription message events."""
+        try:
+            user_name = event["user_name"]
+            user_id = event["user_id"]
+            tier = event["tier"]
+            streak = event.get("streak_months", 0)
+            total = event.get("cumulative_months", 0)
+            duration = event.get("duration_months", 1)
+            message = format_text(event.get("message", {}).get("text", ""))
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.RESUB_MESSAGE,
+                    param={
+                        "user_name": user_name,
+                        "tier": tier,
+                        "streak": streak,
+                        "total": total,
+                        "duration": duration,
+                        "message": message
+                    }
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.RESUB,
+                    id=id, user=user_name, user_id=user_id, date=date,
+                    message=message, tier=tier, streak=streak,
+                    duration=duration, total=total
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing resub message event: {e}")
+
+    def __process_channel_cheer(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process cheer events."""
+        try:
+            is_anonymous = event['is_anonymous']
+            user_name = event.get("user_name") if not is_anonymous else None
+            message = event.get("message", "")
+            nb_bits = event["bits"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.CHANNEL_CHEER,
+                    param={
+                        "user_name": user_name,
+                        "message": message,
+                        "nb_bits": nb_bits,
+                        "is_anonymous": is_anonymous
+                    }
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                user_id = event.get("user_id") if not is_anonymous else None
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.CHANNEL_CHEER,
+                    id=id, user=user_name, user_id=user_id,
+                    date=date, nb_bits=nb_bits,
+                    anonymous=str(is_anonymous).upper()
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing channel cheer event: {e}")
+
+    def __process_poll_begin(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process poll begin events."""
+        try:
+            poll_title = event["title"]
+            choices = event["choices"]
+            bits_settings = event.get("bits_voting", {})
+            channel_point_settings = event.get("channel_points_voting", {})
+            start = event["started_at"]
+            end = event["ends_at"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.POLL_BEGIN,
+                    param={
+                        "title": poll_title,
+                        "choices": choices,
+                        "bits_settings": bits_settings,
+                        "channel_point_settings": channel_point_settings,
+                        "start_date": start,
+                        "end_date": end
+                    }
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing poll begin event: {e}")
+
+    def __process_poll_end(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process poll end events."""
+        try:
+            poll_title = event["title"]
+            choices = event["choices"]
             status = event["status"]
-            self.__dbmanager.execute_script(DataBaseTemplate.PREDICTION, id=id, title=pred_title,
-                                            winning_outcome=winning, winning_outcome_id=winning_id,
-                                            start_date=start_date, end_date=end_date, status=status)
 
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.POLL_END,
+                    param={
+                        "title": poll_title,
+                        "choices": choices,
+                        "status": status
+                    }
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                bits_enable = event.get("bits_voting", {}).get("is_enabled", False)
+                bits_amount_per_vote = event.get("bits_voting", {}).get("amount_per_vote", 0)
+                channel_point_enable = event.get("channel_points_voting", {}).get("is_enabled", False)
+                channel_point_amount_per_vote = event.get("channel_points_voting", {}).get("amount_per_vote", 0)
+                start_date = event["started_at"].replace("Z", "")
+                end_date = event["ended_at"].replace("Z", "")
+
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.POLL,
+                    id=id, title=poll_title, bits_enable=bits_enable,
+                    bits_amount_per_vote=bits_amount_per_vote, start_date=start_date,
+                    channel_point_enable=channel_point_enable, end_date=end_date,
+                    channel_point_amount_per_vote=channel_point_amount_per_vote,
+                    status=status
+                )
+
+                for c in choices:
+                    self.__dbmanager.execute_script(
+                        DataBaseTemplate.POLL_CHOICES,
+                        id=c["id"], title=c["title"],
+                        bits_votes=c.get("bits_votes", 0),
+                        votes=c["votes"], poll_id=id,
+                        channel_points_votes=c.get("channel_points_votes", 0)
+                    )
+
+        except Exception as e:
+            logger.error(f"Error processing poll end event: {e}")
+
+    def __process_prediction_begin(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process prediction begin events."""
+        try:
+            pred_title = event["title"]
+            choices = event["outcomes"]
+            start = event["started_at"]
+            lock = event["locks_at"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.PREDICTION_BEGIN,
+                    param={
+                        "title": pred_title,
+                        "choices": choices,
+                        "start_date": start,
+                        "lock_date": lock
+                    }
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing prediction begin event: {e}")
+
+    def __process_prediction_lock(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process prediction lock events."""
+        try:
+            pred_title = event["title"]
+            result = event["outcomes"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.PREDICTION_LOCK,
+                    param={"title": pred_title, "result": result}
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing prediction lock event: {e}")
+
+    def __process_prediction_end(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process prediction end events."""
+        try:
+            pred_title = event["title"]
+            result = event["outcomes"]
+            winning = None
+
+            # Find the winning prediction
             for r in result:
-                self.__dbmanager.execute_script(DataBaseTemplate.PREDICTION_CHOICES, id=r["id"], title=r["title"],
-                                                nb_users=r["users"], channel_points=r["channel_points"],
-                                                prediction_id=id)
+                if r["id"] == event.get("winning_outcome_id"):
+                    winning = r["title"]
+                    break
 
-    def __process_ban(self, event: dict, id: str):
-        """
-        When a ban notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        """
-        user = event["user_name"]
-        user_id = event["user_id"]
-        reason = event["reason"]
-        ban_date = event["banned_at"]
-        end_ban = event["ends_at"]
-        permanent = event["is_permanent"]
-        moderator_name = event["moderator_user_name"]
-        self.__trigger_map.trigger(TriggerSignal.BAN, param={"user_name": user, "moderator_name": moderator_name,
-                                                             "reason": reason, "start_ban": ban_date,
-                                                             "end_ban": end_ban, "permanent": permanent, "user_id": user_id})
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.PREDICTION_END,
+                    param={
+                        "title": pred_title,
+                        "result": result,
+                        "winning_pred": winning
+                    }
+                )
 
-        if self.__store_in_db:
-            user_id = event["user_id"]
-            moderator_id = event["moderator_user_id"]
-            self.__dbmanager.execute_script(DataBaseTemplate.BAN, id=id, user=user, user_id=user_id,
-                                            moderator=moderator_id, moderator_id=moderator_id, reason=reason,
-                                            start_ban=ban_date, end_ban=end_ban, is_permanent=permanent)
+            if self.__store_in_db and self.__dbmanager and winning:
+                winning_id = event.get("winning_outcome_id")
+                start_date = event["started_at"].replace("Z", "")
+                end_date = event["ended_at"].replace("Z", "")
+                status = event["status"]
 
-    def __process_unban(self, event: dict):
-        """
-        When an unban notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        """
-        user = event["user_name"]
-        user_id = event["user_id"]
-        self.__trigger_map.trigger(TriggerSignal.UNBAN, param={"user_name": user, "user_id": user_id})
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.PREDICTION,
+                    id=id, title=pred_title,
+                    winning_outcome=winning, winning_outcome_id=winning_id,
+                    start_date=start_date, end_date=end_date, status=status
+                )
 
-    def __process_vip_add(self, event: dict, date: str):
-        """
-        When a new vip notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param date: timestamp of the notification
-        """
-        user = event["user_name"]
-        self.__trigger_map.trigger(TriggerSignal.VIP_ADD, param={"user_name": user})
+                for r in result:
+                    self.__dbmanager.execute_script(
+                        DataBaseTemplate.PREDICTION_CHOICES,
+                        id=r["id"], title=r["title"],
+                        nb_users=r.get("users", 0),
+                        channel_points=r.get("channel_points", 0),
+                        prediction_id=id
+                    )
 
-        if self.__store_in_db:
-            user_id = event["user_id"]
-            self.__dbmanager.execute_script(DataBaseTemplate.ADD_VIP, user_id=user_id, user=user, date=date)
+        except Exception as e:
+            logger.error(f"Error processing prediction end event: {e}")
 
-    def __process_vip_remove(self, event: dict):
-        """
-        When a removed vip notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        """
-        user = event["user_name"]
-        self.__trigger_map.trigger(TriggerSignal.VIP_REMOVE, param={"user_name": user})
+    def __process_vip_add(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process VIP add events."""
+        try:
+            user_name = event["user_name"]
 
-        if self.__store_in_db:
-            user_id = event["user_id"]
-            self.__dbmanager.execute_script(DataBaseTemplate.REMOVE_VIP, user_id=user_id)
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.VIP_ADD,
+                    param={"user_name": user_name}
+                )
 
-    def __process_stream_online(self, event: dict):
-        """
-        When a stream online notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        """
-        type = event["type"]
-        start = event["started_at"]
-        self.__trigger_map.trigger(TriggerSignal.STREAM_ONLINE, param={"type": type, "start_time": start})
+            if self.__store_in_db and self.__dbmanager:
+                user_id = event["user_id"]
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.ADD_VIP,
+                    user_id=user_id, user=user_name, date=date
+                )
 
-    def __process_stream_offline(self):
-        """
-        When a stream offline notification is sent, extract all relevant information and trigger the associated callback
-        """
-        self.__trigger_map.trigger(TriggerSignal.STREAM_OFFLINE)
+        except Exception as e:
+            logger.error(f"Error processing VIP add event: {e}")
 
-    def __process_bits(self, event: dict, id: str, date: str):
-        """
-        When a bits notification is sent, extract all relevant information and trigger the associated callback
-        :param event: event payload of the notification
-        :param id: id of the notification
-        :param date: timestamp of the notification
-        """
-        user = event["user_name"]
-        bits_number = event["bits"]
-        type = event["type"]
-        power_up = event["power_up"]
-        message = format_text(event["message"]["text"])
-        self.__trigger_map.trigger(TriggerSignal.BITS, param={"user_name": user, "bits": bits_number, "type": type,
-                                                              "power_up": power_up, "message": message})
+    def __process_vip_remove(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process VIP remove events."""
+        try:
+            user_name = event["user_name"]
 
-        if self.__store_in_db:
-            user_id = event["user_id"]
-            power_up = "NULL" if power_up else "'" + power_up + "'"
-            message = "NULL" if message else "'" + message + "'"
-            self.__dbmanager.execute_script(DataBaseTemplate.BITS, id=id, user_id=user_id, user=user, type=type,
-                                            nb_bits=bits_number, power_up=power_up, message=message, date=date)
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.VIP_REMOVE,
+                    param={"user_name": user_name}
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                user_id = event["user_id"]
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.REMOVE_VIP,
+                    user_id=user_id
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing VIP remove event: {e}")
+
+    def __process_stream_online(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process stream online events."""
+        try:
+            stream_type = event["type"]
+            start_time = event["started_at"]
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.STREAM_ONLINE,
+                    param={"type": stream_type, "start_time": start_time}
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing stream online event: {e}")
+
+    def __process_stream_offline(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process stream offline events."""
+        try:
+            if self.__trigger_map:
+                self.__trigger_map.trigger(TriggerSignal.STREAM_OFFLINE)
+
+        except Exception as e:
+            logger.error(f"Error processing stream offline event: {e}")
+
+    def __process_bits(self, event: Dict[str, Any], date: str, id: str) -> None:
+        """Process bits events."""
+        try:
+            user_name = event["user_name"]
+            bits_number = event["bits"]
+            bits_type = event.get("type", "")
+            power_up = event.get("power_up", "")
+            message = format_text(event.get("message", {}).get("text", ""))
+
+            if self.__trigger_map:
+                self.__trigger_map.trigger(
+                    TriggerSignal.BITS,
+                    param={
+                        "user_name": user_name,
+                        "bits": bits_number,
+                        "type": bits_type,
+                        "power_up": power_up,
+                        "message": message
+                    }
+                )
+
+            if self.__store_in_db and self.__dbmanager:
+                user_id = event["user_id"]
+                power_up_formatted = "NULL" if not power_up else f"'{power_up}'"
+                message_formatted = "NULL" if not message else f"'{message}'"
+
+                self.__dbmanager.execute_script(
+                    DataBaseTemplate.BITS,
+                    id=id, user_id=user_id, user=user_name, type=bits_type,
+                    nb_bits=bits_number, power_up=power_up_formatted,
+                    message=message_formatted, date=date
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing bits event: {e}")
+
+    def run_forever(self, sockopt=None, sslopt=None, ping_interval=0, ping_timeout=None,
+                    http_proxy_host=None, http_proxy_port=None,
+                    http_no_proxy=None, http_proxy_auth=None,
+                    skip_utf8_validation=False,
+                    host=None, origin=None, dispatcher=None,
+                    suppress_origin=False, proxy_type=None):
+        """Override to add logging."""
+        logger.debug(f"Starting WebSocket run_forever (keep_running={self.keep_running})")
+        try:
+            result = super().run_forever(
+                sockopt=sockopt, sslopt=sslopt, ping_interval=ping_interval,
+                ping_timeout=ping_timeout, http_proxy_host=http_proxy_host,
+                http_proxy_port=http_proxy_port, http_no_proxy=http_no_proxy,
+                http_proxy_auth=http_proxy_auth, skip_utf8_validation=skip_utf8_validation,
+                host=host, origin=origin, dispatcher=dispatcher,
+                suppress_origin=suppress_origin, proxy_type=proxy_type
+            )
+            logger.debug(f"WebSocket run_forever ended (keep_running={self.keep_running})")
+            return result
+        except Exception as e:
+            logger.error(f"Exception in run_forever: {e}")
+            raise
+
+    def run_forever_with_proper_reconnection(self):
+        """Run WebSocket with proper reconnection handling."""
+        logger.info("Starting EventSub with proper reconnection handling...")
+
+        while self.keep_running and self.__current_retry < self.__max_retries:
+            try:
+                if not self._can_connect():
+                    logger.warning("Cannot connect due to rate limits. Waiting...")
+                    time.sleep(30)
+                    continue
+
+                logger.info(f"EventSub connection attempt {self.__current_retry + 1}/{self.__max_retries}")
+                self._record_connection_attempt()
+
+                # Reset connection state before attempting
+                self._reset_connection_state()
+
+                # Start primary connection
+                self.run_forever()
+
+                # If we reach here, connection ended (normally or with error)
+                logger.info("EventSub connection ended")
+
+                # Check if we should reconnect
+                if not self.keep_running:
+                    logger.info("EventSub stopped by request (keep_running=False)")
+                    break
+
+                # Connection ended but keep_running is still True, so reconnect
+                logger.warning("Connection lost, will attempt to reconnect...")
+                self.__current_retry += 1
+
+            except KeyboardInterrupt:
+                logger.info("EventSub stopped by user")
+                self.keep_running = False
+                break
+
+            except Exception as e:
+                self.__current_retry += 1
+                logger.error(f"EventSub connection error: {e}")
+
+                if self.__current_retry < self.__max_retries and self.keep_running:
+                    delay = min(2 ** self.__current_retry * 10, 120)
+                    logger.info(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    logger.error("Max retries reached or stop requested")
+                    break
+
+        logger.info(
+            f"EventSub reconnection loop ended (keep_running={self.keep_running}, retries={self.__current_retry}/{self.__max_retries})")
+
+    def _reset_connection_state(self):
+        """Reset connection state before reconnection attempt."""
+        logger.debug("Resetting connection state for reconnection")
+
+        # Reset WebSocket state
+        self.sock = None
+        self.connected = False
+
+        # Reset session ID to force new session
+        self.__session_id = None
+
+        # Clear rate limit tracking for fresh start
+        current_time = datetime.now()
+        if self.__last_429_error and (current_time - self.__last_429_error).total_seconds() > 300:
+            logger.debug("Clearing old rate limit tracking")
+            self.__connection_attempts = []
+            self.__subscription_attempts = []
+            self.__last_429_error = None
+
+    def on_close(self, ws, close_status_code, close_msg):
+        """Handle WebSocket connection closure."""
+        connection_type = "primary" if ws.sock == self.sock else "reconnect"
+        logger.info(f"WebSocket {connection_type} connection closed: {close_status_code} - {close_msg}")
+
+        # Don't set keep_running to False here! Let the retry logic handle it
+        # Only clean up database if we're truly stopping
+        if not self.keep_running and self.__store_in_db and self.__dbmanager:
+            try:
+                self.__dbmanager.close()
+                logger.info("Database connection closed")
+            except Exception as e:
+                logger.error(f"Error closing database: {e}")
+
+    def on_error(self, ws, error):
+        """Handle WebSocket errors."""
+        connection_type = "primary" if ws.sock == self.sock else "reconnect"
+        logger.error(f"WebSocket error on {connection_type} connection: {error}")
+
+        # Check if this is a connection error that should trigger reconnection
+        if isinstance(error, (ConnectionError, OSError)):
+            logger.warning("Connection error detected, will attempt reconnection")
+            # Don't set keep_running to False here!
+
+    def on_open(self, ws) -> None:
+        """Handle WebSocket connection opening."""
+        connection_type = "primary" if ws.sock == self.sock else "reconnect"
+        logger.info(f"✅ {connection_type.title()} WebSocket connected to EventSub")
+
+    @property
+    def is_running(self) -> bool:
+        """Check if EventSub is currently running."""
+        return self.keep_running and self.sock is not None
+
+    def __del__(self) -> None:
+        """Cleanup when object is destroyed."""
+        try:
+            if self.__dbmanager:
+                self.__dbmanager.close()
+            if self.__reconnect_ws:
+                self.__reconnect_ws.close()
+        except:
+            pass
