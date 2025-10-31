@@ -1,15 +1,33 @@
 # Changelog
 
-## [UNRELEASED]
-
-### Fixed
-- Possible to specify the path of the access token file
-- Check of scope is made on sorted scope
-- Fix lock method of DataBaseManager to get self parameter
+## [Unreleased]
 
 ### Added
-- Add requirements.txt
-- Add right for moderator to ban user
+- Clips management functionality (creating and editing clips with appropriate endpoints and rights)
+- Quick start guide for users
+- Unban and subscription end event notifications
+- User ID support for chatbot
+- Automatic database directory creation if missing
+- Traceback printing for websocket message exceptions
+
+### Changed
+- Replaced reconnection strategy with server restart approach for better stability
+- EventSub reconnection now managed by ChatBot instead of daemon processes
+- Improved README documentation
+
+### Fixed
+- EventSub server stability issues (connection errors, launch failures, retry mechanisms)
+- Authentication failures and HTTP status code checks
+- Token refresh process (missing scope in credentials)
+- Rate limiting issues with Twitch Event Subscription
+- Conflicts between primary and reconnection servers
+- Clips method implementation
+- Beta release issues
+
+### Removed
+- Websocket reconnection logic (replaced by server restart)
+- Daemon mode for EventSub
+- Unused exceptions and redundant code
 
 ## [0.2.0] (13/03/2025)
 
