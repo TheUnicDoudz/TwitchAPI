@@ -319,6 +319,17 @@ class ChatBot:
             logger.error(f"Unexpected error sending message: {e}")
             raise TwitchEndpointError(f"Failed to send message: {e}")
 
+    def get_stream_info(self):
+        try:
+            endpoint = TwitchEndpoint.apply_param(
+                TwitchEndpoint.CHANNEL_INFO,
+                channel_id=self._channel_id
+            )
+            return self.__auth.get_request(endpoint)
+        except Exception as e:
+            logger.error(f"Unexpected error get stream info: {e}")
+            raise TwitchEndpointError(f"Failed to get stream info: {e}")
+
     def __run_event_server(self) -> None:
         """
         Run the EventSub WebSocket server with automatic reconnection.
